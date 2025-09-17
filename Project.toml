@@ -1,0 +1,26 @@
+name = "ParameterCalibration"
+uuid = "6b2e2b3d-7c87-4d49-b294-b1b6a6a3d0a1"
+authors = ["Your Name <you@example.com>"]
+version = "0.1.0"
+
+[deps]
+DSP = "717857b8-e6f2-59f4-9121-6e50c889abd2"
+FastSDE = "3f8b8b38-4b49-4d9d-9d97-3a73d63a64a6"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+ScoreEstimation = "8d73b47c-4136-4c8d-8aae-21cdc18f4aee"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[compat]
+FastSDE = "0.1.0"
+Flux = "0.16.5"
+Plots = "1.40.19"
+Revise = "3.9.0"
+ScoreEstimation = "0.1.0"
+julia = "1.11"

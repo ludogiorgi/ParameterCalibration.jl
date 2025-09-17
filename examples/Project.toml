@@ -1,0 +1,14 @@
+name = "ParameterCalibrationExamples"
+uuid = "b8d8b976-3e4e-4a76-9c9d-1a7f6b0d6e12"
+version = "0.1.0"
+
+[deps]
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+ParameterCalibration = "6b2e2b3d-7c87-4d49-b294-b1b6a6a3d0a1"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+KernelDensity = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"

@@ -1,0 +1,73 @@
+# Shared configuration for examples and tests
+
+[simulation]
+dt = 0.01
+Nsteps = 200_000
+resolution = 10
+n_ens = 100
+u0 = [0.0]
+burn_in = 0
+timestepper = "euler"
+sigma_inplace = true
+noise = "shared" # unused in current FastSDE wrapper
+rng_seed = 12648430 # 0xC0FFEE
+
+[score_nn]
+preprocessing = true
+sigma = 0.05
+epochs = 1000
+epochs_re = 100   # epochs per iteration when continuing training (preprocessing=false)
+batch_size = 16
+lr = 1e-3
+# neurons (hidden sizes only). If empty: [128, 128]
+neurons = [100, 50]
+use_gpu = false
+jacobian = true
+probes = 1
+verbose = true
+
+[score_nn.kgmm]
+prob = 0.002
+conv_param = 1e-3
+show_progress = false
+
+[observables]
+# Existing dt_multiplier and Tmax used for GFDT correlations
+# dt_multiplier = 1.0
+# Tmax = 10.0
+# Select which scalar observables to use (any subset of m1..m4)
+use_moments = ["m1", "m2"]
+# Indicator functions to include: "ge" for 1{u≥α}, "le" for 1{u≤β}
+use_indicators = ["le"]
+# Probability p used to define α and β thresholds
+p_indicator = 0.9
+
+[calibration]
+# Methods to run: any subset of ["analytic", "gaussian", "neural", "finite_diff"]
+methods = ["analytic", "gaussian", "neural", "finite_diff"]
+# Maximum Newton iterations
+maxiters = 8
+# Newton step tolerance on relative parameter change
+tol_theta = 1e-6
+# Damping factor for Newton updates
+damping = 1.0
+# Whether to mean-center A and B when building responses
+mean_center = true
+# RNG offset for calibration simulations (seed = simulation.rng_seed + rng_offset)
+rng_offset = 1
+# Multiplicative perturbation applied elementwise to initial θ0
+theta_init_multipliers = [1.2, 1.2, 1.0, 1.0, 1.2]
+# Optional: indices (1-based) of free parameters to tune (omit to use all)
+free_idx = [1, 2, 5]
+
+[plots]
+xs_min = -2.5
+xs_max = 2.5
+xs_len = 300
+
+[model]
+F_tilde = 0.6
+a = -0.0222
+b = -0.2
+c = 0.0494
+s = 0.7071

@@ -2,7 +2,7 @@
 
 [simulation]
 dt = 0.01
-Nsteps = 200_000
+Nsteps = 10_000
 resolution = 10
 n_ens = 100
 u0 = [0.0]
@@ -40,13 +40,13 @@ use_moments = ["m1", "m2"]
 # Indicator functions to include: "ge" for 1{u≥α}, "le" for 1{u≤β}
 use_indicators = ["le"]
 # Probability p used to define α and β thresholds
-p_indicator = 0.9
+thresholds = [-1.0, 2.0]
 
 [calibration]
 # Methods to run: any subset of ["analytic", "gaussian", "neural", "finite_diff"]
 methods = ["analytic", "gaussian", "neural", "finite_diff"]
 # Maximum Newton iterations
-maxiters = 8
+maxiters = 6
 # Newton step tolerance on relative parameter change
 tol_theta = 1e-6
 # Damping factor for Newton updates

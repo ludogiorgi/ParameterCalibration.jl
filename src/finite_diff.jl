@@ -13,8 +13,8 @@ function finite_difference_jacobian(simulator::Function,
                                     θ::AbstractVector,
                                     A_of_x::Function;
                                     free_idx::AbstractVector{<:Integer}=collect(1:length(θ)),
-                                    h_rel::Real=1e-4,
-                                    h_abs::Real=1e-6)
+                                    h_rel::Real=1e-2,
+                                    h_abs::Real=1e-4)
     θ0 = collect(Float64.(θ))
     p  = length(θ0)
     free = collect(free_idx)

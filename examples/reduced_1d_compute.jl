@@ -36,7 +36,6 @@ using LinearAlgebra, Statistics, Printf, Random, ProgressMeter, Dates
 using HDF5
 using ParameterCalibration
 const PC = ParameterCalibration
-const Obs = PC.Observables
 
 # --------------------------------------------------------------------------------------
 # Configuration & Parameters
@@ -108,63 +107,52 @@ function make_analytic_score(μ::AbstractVector, Σ::AbstractVector)
     end
 end
 
-# Physical simulation (no normalization) --------------------------------------------------
-function simulate_phys(θ::AbstractVector, spec::PC.SimSpec)
-    drift_θ! = (du,u,t) -> (du[1] = θ[1] + θ[2]*u[1] + θ[3]*u[1]^2 - θ[4]*u[1]^3)
-    sigma_θ! = (du,u,t) -> (du[1] = θ[5])
-    PC.simulate(spec.u0, drift_θ!, sigma_θ!; spec=spec)
-end
-
-# Normalized simulator (returns normalized trajectories) ----------------------------------
-function make_simulator(spec::PC.SimSpec, μ::AbstractVector, Σ::AbstractVector)
-    μ_obs = collect(Float64.(μ)); Σ_obs = collect(Float64.(Σ))
-    function simulator(θ::AbstractVector)
+# Simulator (returns trajectories) ----------------------------------
+function make_simulators(spec::PC.SimSpec)
+    function simulator_obs(θ::AbstractVector)
         drift_θ! = (du,u,t) -> (du[1] = θ[1] + θ[2]*u[1] + θ[3]*u[1]^2 - θ[4]*u[1]^3)
         sigma_θ! = (du,u,t) -> (du[1] = θ[5])
         Xp = PC.simulate(spec.u0, drift_θ!, sigma_θ!; spec=spec)
-        return (Xp .- μ_obs) ./ Σ_obs
+        return Xp
     end
-    return simulator
+    function make_simulator_norm(μ::AbstractVector, Σ::AbstractVector)
+        function norm_simulator(θ::AbstractVector)
+            S1 = Float64(Σ[1]); M1 = Float64(μ[1])
+            drift_θ! = (du,u,t) -> begin
+                uphys = u[1]
+                f = θ[1] + θ[2]*uphys + θ[3]*uphys^2 - θ[4]*uphys^3
+                du[1] = f
+            end
+            sigma_θ! = (du,u,t) -> (du[1] = θ[5])
+            Xp = PC.simulate(spec.u0, drift_θ!, sigma_θ!; spec=spec)
+            return (Xp .- M1) ./ S1
+        end
+        return norm_simulator
+    end
+    return simulator_obs, make_simulator_norm
 end
 
 # Main pipeline ----------------------------------------------------------------------------
 function run_pipeline(; verbose=true, save_path=RESULT_FILE)
     verbose && println("Loading configuration ...")
     cfg_path = joinpath(@__DIR__, "..", "config", "config_reduced_1d.toml")
-    nn_cfg, spec_obs = PC.load_config(cfg_path)
+    nn_cfg, sim_cfg = PC.load_config(cfg_path)
     extra = PC.load_extra_config(cfg_path)
 
     θ_true = Float64[extra.model.F_tilde, extra.model.a, extra.model.b, extra.model.c, extra.model.s]
     verbose && println("Simulating observed data with true parameters ...")
-    Xobs = simulate_phys(θ_true, spec_obs)
+    simulator_obs, make_simulator_norm = make_simulators(sim_cfg)
+    Xobs = simulator_obs(θ_true)
     μ = vec(mean(Xobs, dims=2)); Σ = vec(std(Xobs, dims=2))
     X = (Xobs .- μ) ./ Σ
 
-    μ_phys = μ[1]; Σ_phys = Σ[1]
     use_moments    = Tuple(extra.observables.use_moments)
     use_indicators = Tuple(extra.observables.use_indicators)
-    p_indicator    = extra.observables.p_indicator
-    # Decide whether to anchor indicator thresholds on the initial parameter guess (θ_init) rather than true data
-    θ_init_for_thresholds = θ_true .* extra.calibration.θ_init_multipliers
-    verbose && println("Simulating trajectory with θ_init for threshold estimation ...")
-    X_init_threshold = simulate_phys(θ_init_for_thresholds, spec_obs)
-    u_samples = vec(X_init_threshold[1,:])  # use initial-parameter distribution for thresholds
-    thresholds_local = try
-        Obs.thresholds_from_p(u_samples, p_indicator)
-    catch err
-        @warn "thresholds_from_p unavailable or signature mismatch; using deprecated dynamic p path" exception=err
-        nothing
-    end
-    if thresholds_local === nothing
-        A_vec, obs_labels, thresholds = Obs.build_A_of_x(μ_phys, Σ_phys;
-            use_moments=use_moments, use_indicators=use_indicators,
-            u_samples=u_samples, p=p_indicator)
-    else
-        A_vec, obs_labels, thresholds = Obs.build_A_of_x(μ_phys, Σ_phys;
-            use_moments=use_moments, use_indicators=use_indicators,
-            u_samples=u_samples, thresholds=thresholds_local)
-    end
-
+    thresholds     = extra.observables.thresholds
+    make_A_of_x = PC.build_make_A_of_x(; use_moments=use_moments, use_indicators=use_indicators, thresholds=thresholds)
+    A_of_x, obs_labels = make_A_of_x(μ[1], Σ[1])
+    # IMPORTANT: A_of_x is defined on normalized coordinates; use X (normalized)
+    A_target = PC.stats_A(X, A_of_x)
     builders = make_builders(μ, Σ)
     θ0 = copy(θ_true)
     base_model = PC.GFDTModel(
@@ -173,17 +161,17 @@ function run_pipeline(; verbose=true, save_path=RESULT_FILE)
         div_dF_dθ=builders.div_dF_dθ_norm, divM=builders.divM_norm, divdivM=builders.divdivM_norm,
         θ=θ0, mode=:general, xeltype=Float64)
 
-    Δt_eff = spec_obs.dt * spec_obs.resolution * spec_obs.Δt_multiplier
-    Tmax   = spec_obs.Tmax
+    Δt_eff = sim_cfg.dt * sim_cfg.resolution * sim_cfg.Δt_multiplier
+    Tmax   = sim_cfg.Tmax
     analytic_builder = make_analytic_score(μ, Σ)
 
     verbose && println("Building estimators ...")
-    est_true  = PC.build_analytic_estimator(X, base_model, θ0; Δt=Δt_eff, Tmax=Tmax, mean_center=true, analytic_builder=analytic_builder, A_of_x=A_vec)
-    est_gauss = PC.build_gaussian_estimator(X, base_model, θ0; Δt=Δt_eff, Tmax=Tmax, mean_center=true, A_of_x=A_vec)
-    Random.seed!(spec_obs.seed)
-    est_nn, nn_pre = PC.build_neural_estimator(X, base_model, θ0, nn_cfg; Δt=Δt_eff, Tmax=Tmax, mean_center=true, A_of_x=A_vec)
-    simulator = make_simulator(spec_obs, μ, Σ)
-    est_fd    = PC.build_finite_diff_estimator(simulator, θ0, A_vec)
+    est_true  = PC.build_analytic_estimator(X, base_model, θ0; Δt=Δt_eff, Tmax=Tmax, mean_center=true, analytic_builder=analytic_builder, A_of_x=A_of_x)
+    est_gauss = PC.build_gaussian_estimator(X, base_model, θ0; Δt=Δt_eff, Tmax=Tmax, mean_center=true, A_of_x=A_of_x)
+    Random.seed!(sim_cfg.seed)
+    est_nn, nn_pre = PC.build_neural_estimator(X, base_model, θ0, nn_cfg; Δt=Δt_eff, Tmax=Tmax, mean_center=true, A_of_x=A_of_x)
+    simulator_norm = make_simulator_norm(μ, Σ)
+    est_fd    = PC.build_finite_diff_estimator(simulator_norm, θ0, A_of_x)
 
     # Score/Jacobian sampling grid
     xs = collect(range(extra.plots.xs_min, extra.plots.xs_max; length=extra.plots.xs_len))
@@ -209,15 +197,6 @@ function run_pipeline(; verbose=true, save_path=RESULT_FILE)
 
     # Calibration loop setup
     verbose && println("Running calibration loops ...")
-    spec_calib = PC.SimSpec(
-        dt=spec_obs.dt, Nsteps=spec_obs.Nsteps, n_ens=spec_obs.n_ens,
-        u0=spec_obs.u0, burn_in=spec_obs.burn_in,
-        resolution=spec_obs.resolution, seed=spec_obs.seed + extra.calibration.rng_offset,
-        timestepper=spec_obs.timestepper,
-        sigma_inplace=spec_obs.sigma_inplace, noise=spec_obs.noise,
-        Δt_multiplier=spec_obs.Δt_multiplier, Tmax=spec_obs.Tmax)
-    sim_norm = make_simulator(spec_calib, μ, Σ)
-    A_target, _ = PC.stats_AG(A_vec, X, X)
     all_methods = Dict(
         :analytic => PC.GFDTAnalyticScore(),
         :gaussian => PC.GFDTGaussianScore(),
@@ -228,11 +207,13 @@ function run_pipeline(; verbose=true, save_path=RESULT_FILE)
     θ_init = θ0 .* extra.calibration.θ_init_multipliers
     results = Dict{Symbol,Any}()
     @showprogress for (sym, method) in methods
-        res = PC.calibration_loop(method, base_model, A_vec;
-            sim_norm=sim_norm, X_obs_norm=X, θ0=θ_init,
+        res = PC.calibration_loop(method, A_target;
+            simulator_obs, make_builders, make_A_of_x,
+            θ0=θ_init,
             Δt=Δt_eff, Tmax=Tmax,
             nn_cfg = sym == :neural ? nn_cfg : nothing,
-            analytic_builder = sym == :analytic ? analytic_builder : nothing,
+            make_analytic_score = sym == :analytic ? make_analytic_score : nothing,
+            make_simulator_norm = sym == :finite_diff ? make_simulator_norm : nothing,
             maxiters=extra.calibration.maxiters,
             tol_θ=extra.calibration.tol_θ,
             damping=extra.calibration.damping,

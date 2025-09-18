@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.11.6"
+julia_version = "1.11.7"
 manifest_format = "2.0"
 project_hash = "ffb7db4f1c3bf66d6d4fa9ece937ebcbdba2d6e5"
 
@@ -2839,7 +2839,7 @@ version = "1.1.0"
 
 [[deps.ParameterCalibration]]
 deps = ["DSP", "FastSDE", "Flux", "LinearAlgebra", "Plots", "Printf", "ProgressMeter", "Random", "Revise", "ScoreEstimation", "Statistics", "TOML"]
-path = "/Users/ludovico/Library/CloudStorage/OneDrive-MassachusettsInstituteofTechnology/Documents/JuliaProjects/ParameterCalibration/examples/.."
+path = "/Users/ludovico/Library/CloudStorage/OneDrive-MassachusettsInstituteofTechnology/Documents/JuliaProjects/ParameterCalibration.jl/examples/.."
 uuid = "6b2e2b3d-7c87-4d49-b294-b1b6a6a3d0a1"
 version = "0.1.0"
 

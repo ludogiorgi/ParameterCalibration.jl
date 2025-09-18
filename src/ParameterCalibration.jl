@@ -5,6 +5,7 @@ using Statistics
 using Random
 using ScoreEstimation
 using ProgressMeter
+using FastSDE
 
 # Public API modules/files
 include("types.jl")
@@ -13,7 +14,7 @@ include("gfdt.jl")
 include("calibration.jl")
 include("estimators.jl")
 include("finite_diff.jl")
-include("integration/fastsde.jl")
+include("fastsde.jl")
 include("config.jl")
 include("estimators_builders.jl")
 include("observables.jl")
@@ -37,10 +38,6 @@ export
     # Core GFDT
     B_gfdt,
     # Calibration utilities
-    stats_AG,
-    weight_inverse_cov,
-    make_regularizer,
-    newton_step,
     calibration_loop,
     # Score estimators
     gaussian_score_from_data,
@@ -57,6 +54,6 @@ export
     build_gaussian_estimator,
     build_neural_estimator,
     build_finite_diff_estimator,
-    Observables, moment_observables, indicator_observables_from_p, estimate_quantile_threshold, build_A_of_x
+    stats_A, build_A_of_x, build_make_A_of_x
 
 end # module

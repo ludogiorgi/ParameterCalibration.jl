@@ -131,7 +131,47 @@ function load_extra_config(path::AbstractString = "config/config.toml")
     # Observables settings
     use_moments    = _getsyms(get(obs, "use_moments", ["m1","m2","m3","m4"]))
     use_indicators = _getsyms(get(obs, "use_indicators", ["ge","le"]))
-    p_indicator    = Float64(get(obs, "p_indicator", 0.2))
+    thresholds_raw = get(obs, "thresholds", (-1.5, 2.5))
+    # Normalize thresholds into a NamedTuple expected by observables.build_A_of_x
+    # Accepted user forms:
+    #   single number x          -> (α = x,)   (interpreted as lower/"ge" threshold)
+    #   vector/tuple length 1    -> (α = v[1],)
+    #   vector/tuple length 2    -> (α = v[1], β = v[2])
+    #   Dict with keys "α"/"β"    -> map to NamedTuple
+    #   Already a NamedTuple     -> passed through
+    function _norm_thresholds(traw)
+        if traw isa NamedTuple
+            return traw
+        elseif traw isa AbstractDict
+            a = haskey(traw, "α") ? traw["α"] : (haskey(traw, "a") ? traw["a"] : nothing)
+            b = haskey(traw, "β") ? traw["β"] : (haskey(traw, "b") ? traw["b"] : nothing)
+            nt = (;)
+            if a !== nothing && b !== nothing
+                return (α = Float64(a), β = Float64(b))
+            elseif a !== nothing
+                return (α = Float64(a),)
+            elseif b !== nothing
+                return (β = Float64(b),)
+            else
+                return (α = -1.5, β = 2.5) # fallback
+            end
+        elseif traw isa AbstractVector || traw isa Tuple
+            L = length(traw)
+            if L == 1
+                return (α = Float64(traw[1]),)
+            elseif L >= 2
+                return (α = Float64(traw[1]), β = Float64(traw[2]))
+            else
+                return (α = -1.5, β = 2.5)
+            end
+        elseif traw isa Real
+            return (α = Float64(traw),)
+        else
+            # Unknown format; use default canonical pair
+            return (α = -1.5, β = 2.5)
+        end
+    end
+    thresholds = _norm_thresholds(thresholds_raw)
 
     # Calibration settings
     methods_syms   = _getsyms(get(cal, "methods", ["analytic","gaussian","neural","finite_diff"]))
@@ -154,7 +194,7 @@ function load_extra_config(path::AbstractString = "config/config.toml")
         observables = (
             use_moments=use_moments,
             use_indicators=use_indicators,
-            p_indicator=p_indicator,
+            thresholds=thresholds,
         ),
         calibration = (
             methods=methods_syms,

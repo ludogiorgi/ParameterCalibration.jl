@@ -1,6 +1,3 @@
-using FastSDE
-using Random
-
 """
     simulate(u0, drift!, sigma!; spec::SimSpec)
 

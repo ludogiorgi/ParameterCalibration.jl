@@ -25,7 +25,6 @@ const PC = ParameterCalibration
 using Statistics, Random, LinearAlgebra, Printf
 using GLMakie
 using KernelDensity
-const Obs = PC.Observables
 
 # --------------------------------------------------------------------------------------
 # Load configuration
@@ -60,36 +59,18 @@ u_init = vec(X_init[1,:])
 
 _σ_true = std(u_true); _σ_init = std(u_init)
 
-# --------------------------------------------------------------------------------------
-# Observables means (reuse same logic as main example)
-# --------------------------------------------------------------------------------------
-μ = vec(mean(X_true, dims=2)); Σ = vec(std(X_true, dims=2))  # statistics from true trajectory for normalization mapping (physical already used here)
+"""Observables (shared across comparisons): build factory from config thresholds."""
+μ = vec(mean(X_true, dims=2)); Σ = vec(std(X_true, dims=2))
 μ_phys = μ[1]; Σ_phys = Σ[1]
 use_moments    = Tuple(extra.observables.use_moments)
 use_indicators = Tuple(extra.observables.use_indicators)
-p_indicator    = extra.observables.p_indicator
-local_A_of_x = nothing; local_obs_labels = String[]; local_thresholds = nothing
-begin
-    # Attempt preferred fixed-threshold path; fallback gracefully if method not present
-    thresholds_local = try
-        Obs.thresholds_from_p(u_true, p_indicator)
-    catch err
-        @warn "thresholds_from_p unavailable or signature mismatch; using deprecated dynamic p path" exception=err
-        nothing
-    end
-    if thresholds_local === nothing
-        local_A_of_x, local_obs_labels, local_thresholds = Obs.build_A_of_x(μ_phys, Σ_phys;
-            use_moments=use_moments, use_indicators=use_indicators,
-            u_samples=u_true, p=p_indicator)
-    else
-        local_A_of_x, local_obs_labels, local_thresholds = Obs.build_A_of_x(μ_phys, Σ_phys;
-            use_moments=use_moments, use_indicators=use_indicators,
-            u_samples=u_true, thresholds=thresholds_local)
-    end
-end
-const A_of_x = local_A_of_x
-const obs_labels = local_obs_labels
-const thresholds = local_thresholds
+# p_indicator removed in updated config; thresholds now supplied directly
+thresholds_cfg = extra.observables.thresholds
+make_A_of_x = PC.build_make_A_of_x(; use_moments=use_moments, use_indicators=use_indicators, thresholds=thresholds_cfg)
+A_of_x_tmp, obs_labels_tmp = make_A_of_x(μ_phys, Σ_phys)
+const A_of_x = A_of_x_tmp
+const obs_labels = obs_labels_tmp
+const thresholds = thresholds_cfg
 
 function mean_observables(u_series::AbstractVector, A_of_x::Function)
     # A_of_x expects normalized x; we currently have physical u. Convert to normalized x = (u - μ_phys)/Σ_phys
@@ -260,14 +241,11 @@ function _make_simulator(spec::PC.SimSpec, μ::AbstractVector, Σ::AbstractVecto
     return simulator
 end
 
-function _build_estimators(θ_ref::Vector{Float64}, spec::PC.SimSpec; p_indicator=p_indicator, label::String)
+function _build_estimators(θ_ref::Vector{Float64}, spec::PC.SimSpec; label::String)
     X_ref = simulate_phys(θ_ref, spec)
     μr = vec(mean(X_ref, dims=2)); Σr = vec(std(X_ref, dims=2))
     Xn = (X_ref .- μr) ./ Σr
-    # Observables (thresholds from this parameter's distribution)
-    u_samples_ref = vec(X_ref[1,:])
-    th = Obs.thresholds_from_p(u_samples_ref, p_indicator)
-    A_vec, obs_lbls, th_used = Obs.build_A_of_x(μr[1], Σr[1]; use_moments=use_moments, use_indicators=use_indicators, u_samples=u_samples_ref, thresholds=th)
+    A_vec, obs_lbls = make_A_of_x(μr[1], Σr[1])
     builders = _make_builders(μr, Σr)
     model = PC.GFDTModel(
         s = x->zeros(Float64,1), divs=x->0.0, Js=x->zeros(Float64,1,1),
@@ -282,7 +260,7 @@ function _build_estimators(θ_ref::Vector{Float64}, spec::PC.SimSpec; p_indicato
     simulator_norm = _make_simulator(spec, μr, Σr)
     est_fd = PC.build_finite_diff_estimator(simulator_norm, θ_ref, A_vec)
     return (
-        X=X_ref, μ=μr, Σ=Σr, A=A_vec, labels=obs_lbls, thresholds=th_used,
+        X=X_ref, μ=μr, Σ=Σr, A=A_vec, labels=obs_lbls, thresholds=thresholds,
         ests=Dict(
             :analytic=>est_analytic,
             :gaussian=>est_gauss,
@@ -295,8 +273,8 @@ end
 
 println("\n[Responses/Jacobians] Building estimators for θ_true and θ_init ...")
 θ_init = θ_true .* extra.calibration.θ_init_multipliers
-res_true = _build_estimators(θ_true, spec_obs; p_indicator=p_indicator, label="θ_true")
-res_init = _build_estimators(θ_init, spec_obs; p_indicator=p_indicator, label="θ_init")
+res_true = _build_estimators(θ_true, spec_obs; label="θ_true")
+res_init = _build_estimators(θ_init, spec_obs; label="θ_init")
 
 function _plot_responses(res; Δt_eff=Δt_eff)
     ests = res.ests

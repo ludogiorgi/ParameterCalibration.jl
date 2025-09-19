@@ -50,11 +50,27 @@ function load_config(path::AbstractString = "config/config.toml")
     rng_seed    = Int(get(sim, "rng_seed", 0xC0FFEE))
     Δt_mult     = Float64(get(obs, "dt_multiplier", 1.0))
     Tmax        = Float64(get(obs, "Tmax", 10.0))
+    # Optional bounds (both must be present to be used). Accept scalar or vector.
+    lb_raw      = get(sim, "lb", nothing)
+    gb_raw      = get(sim, "gb", nothing)
+    _scalar_bound(x, name) = x === nothing ? nothing : (
+        x isa Real ? Float64(x) : error("Configuration error: $(name) must be a scalar; got $(typeof(x))")
+    )
+    lb_val = _scalar_bound(lb_raw, "lb")
+    gb_val = _scalar_bound(gb_raw, "gb")
+    if (lb_val === nothing) != (gb_val === nothing)
+        error("Configuration error: provide both lb and gb or neither.")
+    elseif lb_val !== nothing && gb_val !== nothing
+        if !(lb_val < gb_val)
+            error("Configuration error: require lb < gb; got lb=$(lb_val), gb=$(gb_val)")
+        end
+    end
     spec = SimSpec(
         dt=dt, Nsteps=Nsteps, n_ens=n_ens, u0=u0,
         burn_in=burn_in, resolution=resolution, seed=rng_seed,
         timestepper=timestepper, sigma_inplace=sigma_inpl, noise=noise_sym,
         Δt_multiplier=Δt_mult, Tmax=Tmax,
+    lb=lb_val, gb=gb_val,
     )
 
     # NN score training
@@ -175,6 +191,11 @@ function load_extra_config(path::AbstractString = "config/config.toml")
 
     # Calibration settings
     methods_syms   = _getsyms(get(cal, "methods", ["analytic","gaussian","neural","finite_diff"]))
+    line_search    = Bool(get(cal, "line_search", false))
+    line_search_max = Int(get(cal, "line_search_max", 4))
+    callback_flag   = Bool(get(cal, "callback", false))
+    callback_dt     = Float64(get(cal, "callback_dt", 0.0))
+    callback_Nsteps = Int(get(cal, "callback_Nsteps", 0))
     maxiters       = Int(get(cal, "maxiters", 4))
     tol_theta      = Float64(get(cal, "tol_theta", 1e-6))
     damping        = Float64(get(cal, "damping", 1.0))
@@ -205,6 +226,11 @@ function load_extra_config(path::AbstractString = "config/config.toml")
             rng_offset=rng_offset,
             θ_init_multipliers=θ_init_mult,
             free_idx=free_idx_vec,
+            line_search=line_search,
+            line_search_max=line_search_max,
+            callback=callback_flag,
+            callback_dt=callback_dt,
+            callback_Nsteps=callback_Nsteps,
         ),
         plots = (
             xs_min=xs_min,

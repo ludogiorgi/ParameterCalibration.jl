@@ -120,14 +120,14 @@ function fig_score_and_jac(meta, score)
     ax1 = Axis(fig[1,1]); styled_axis!(ax1; xlabel="x", ylabel="s(x)", title="Score")
     push!(line_objs, lines!(ax1, xs, score[:s_true]; color=COL_ANALYTIC, linewidth=4)); push!(labels, "Analytical")
     push!(line_objs, lines!(ax1, xs, score[:s_gauss]; color=COL_GAUSS, linewidth=3, linestyle=:dash)); push!(labels, "Gaussian")
-    push!(line_objs, lines!(ax1, xs, score[:s_nn]; color=COL_NEURAL, linewidth=3)); push!(labels, "Neural")
+    push!(line_objs, lines!(ax1, xs, score[:s_nn]; color=COL_NEURAL, linewidth=3)); push!(labels, "KGMM")
 
     ax2 = Axis(fig[2,1]); styled_axis!(ax2; xlabel="x", ylabel="∂s/∂x", title="Jacobian")
     lines!(ax2, xs, score[:J_true]; color=COL_ANALYTIC, linewidth=4)
     lines!(ax2, xs, score[:J_gauss]; color=COL_GAUSS, linewidth=3, linestyle=:dash)
     lines!(ax2, xs, score[:J_nn]; color=COL_NEURAL, linewidth=3)
 
-    leg = Legend(fig, line_objs, labels; framevisible=false, orientation=:horizontal, tellwidth=false)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
     leg.halign = :center
     fig[3,1] = leg
     fig
@@ -143,14 +143,14 @@ function fig_conjugate(meta, conjugate)
         if j == 1
             push!(line_objs, lines!(ax, xs, conjugate[:B_true][j,:]; color=COL_ANALYTIC, linewidth=4)); push!(labels, "Analytical")
             push!(line_objs, lines!(ax, xs, conjugate[:B_gauss][j,:]; color=COL_GAUSS, linewidth=3, linestyle=:dash)); push!(labels, "Gaussian")
-            push!(line_objs, lines!(ax, xs, conjugate[:B_nn][j,:]; color=COL_NEURAL, linewidth=3)); push!(labels, "Neural")
+            push!(line_objs, lines!(ax, xs, conjugate[:B_nn][j,:]; color=COL_NEURAL, linewidth=3)); push!(labels, "KGMM")
         else
             lines!(ax, xs, conjugate[:B_true][j,:]; color=COL_ANALYTIC, linewidth=4)
             lines!(ax, xs, conjugate[:B_gauss][j,:]; color=COL_GAUSS, linewidth=3, linestyle=:dash)
             lines!(ax, xs, conjugate[:B_nn][j,:]; color=COL_NEURAL, linewidth=3)
         end
     end
-    leg = Legend(fig, line_objs, labels; framevisible=false, orientation=:horizontal, tellwidth=false)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
     leg.halign = :center
     fig[P+1,1] = leg
     fig
@@ -170,14 +170,14 @@ function fig_responses(meta, responses)
         if i==1 && j==1
             push!(line_objs, lines!(ax, ts, vec(@view C_true[i,j,:]); color=COL_ANALYTIC, linewidth=3.5)); push!(labels, "Analytical")
             push!(line_objs, lines!(ax, ts, vec(@view C_gauss[i,j,:]); color=COL_GAUSS, linewidth=3, linestyle=:dash)); push!(labels, "Gaussian")
-            push!(line_objs, lines!(ax, ts, vec(@view C_nn[i,j,:]); color=COL_NEURAL, linewidth=3)); push!(labels, "Neural")
+            push!(line_objs, lines!(ax, ts, vec(@view C_nn[i,j,:]); color=COL_NEURAL, linewidth=3)); push!(labels, "KGMM")
         else
             lines!(ax, ts, vec(@view C_true[i,j,:]); color=COL_ANALYTIC, linewidth=3.5)
             lines!(ax, ts, vec(@view C_gauss[i,j,:]); color=COL_GAUSS, linewidth=3, linestyle=:dash)
             lines!(ax, ts, vec(@view C_nn[i,j,:]); color=COL_NEURAL, linewidth=3)
         end
     end
-    leg = Legend(fig, line_objs, labels; framevisible=false, orientation=:horizontal, tellwidth=false)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
     leg.halign = :center
     fig[2,1] = leg
     fig
@@ -190,7 +190,7 @@ function fig_calibration(meta, calib, data)
     fig = Figure(resolution=(520*m, 460))
     grid = fig[1,1] = GridLayout()
     mapping = Dict(:analytic=>COL_ANALYTIC, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL, :finite_diff=>COL_FD)
-    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"Neural", :finite_diff=>"Finite diff")
+    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"KGMM", :finite_diff=>"Finite diff")
     line_objs = Makie.AbstractPlot[]; labels = String[]
     for j in 1:m
         ax = Axis(grid[1,j]); styled_axis!(ax; xlabel="iteration", ylabel=obs_labels[j], title="$(obs_labels[j]) convergence")
@@ -206,7 +206,7 @@ function fig_calibration(meta, calib, data)
             end
         end
     end
-    leg = Legend(fig, line_objs, labels; framevisible=false, orientation=:horizontal, tellwidth=false)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
     leg.halign = :center
     fig[2,1] = leg
     fig
@@ -219,7 +219,7 @@ function fig_parameter_trajectories(meta, calib)
     fig = Figure(resolution=(380*Np, 440))
     grid = fig[1,1] = GridLayout()
     mapping = Dict(:analytic=>COL_ANALYTIC, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL, :finite_diff=>COL_FD)
-    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"Neural", :finite_diff=>"Finite diff")
+    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"KGMM", :finite_diff=>"Finite diff")
     line_objs = Makie.AbstractPlot[]; labels = String[]
     for (j,pn) in enumerate(pnames)
         ax = Axis(grid[1,j]); styled_axis!(ax; xlabel="iteration", ylabel=pn, title=pn)
@@ -235,9 +235,63 @@ function fig_parameter_trajectories(meta, calib)
             end
         end
     end
-    leg = Legend(fig, line_objs, labels; framevisible=false, orientation=:horizontal, tellwidth=false)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
     leg.halign = :center
     fig[2,1] = leg
+    fig
+end
+
+# Figure 6 (new): Merged parameter trajectories (perturbed only) + observable convergence -------
+function fig_calibration_and_parameters(meta, calib, data; tol=1e-12)
+    pnames = meta[:pnames]; θ_true = meta[:θ_true]; θ_init = meta[:θ_init]
+    obs_labels = meta[:obs_labels]; A_target = data[:A_target]
+    # Identify perturbed parameters (initial value differs from true) within tolerance
+    perturbed = findall(j -> !(isapprox(θ_true[j], θ_init[j]; atol=tol, rtol=0.0)), eachindex(θ_true))
+    if isempty(perturbed)
+        perturbed = collect(eachindex(θ_true))  # fallback: show all
+    end
+    npert = length(perturbed); m = length(obs_labels)
+    # Layout: two stacked GridLayouts so column counts may differ
+    fig = Figure(resolution=(max(420*npert, 420*m), 480 + 480))
+    top = fig[1,1] = GridLayout()
+    bottom = fig[2,1] = GridLayout()
+    mapping = Dict(:analytic=>COL_ANALYTIC, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL, :finite_diff=>COL_FD)
+    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"KGMM", :finite_diff=>"Finite diff")
+    line_objs = Makie.AbstractPlot[]; labels = String[]
+    # Row 1: parameter trajectories (perturbed only)
+    for (colidx, j) in enumerate(perturbed)
+        pn = pnames[j]
+    ax = Axis(top[1, colidx]); styled_axis!(ax; xlabel="iteration", ylabel=pn, title=pn * " convergence")
+        hlines!(ax, [θ_true[j]]; color=:gray, linestyle=:dot, linewidth=2)
+        # Use a fixed ordered list of methods for stable legend ordering
+        for sym in (:analytic, :gaussian, :neural, :finite_diff)
+            col = get(mapping, sym, nothing); isnothing(col) && continue
+            haskey(calib, sym) || continue
+            θ_iters = calib[sym][:θ_iters]
+            if colidx == 1
+                push!(line_objs, lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=col, linewidth=3)); push!(labels, label_map[sym])
+            else
+                lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=col, linewidth=3)
+            end
+        end
+    end
+    # Row 2: observable convergence
+    for j in 1:m
+        ax = Axis(bottom[1,j]); styled_axis!(ax; xlabel="iteration", ylabel=obs_labels[j], title="$(obs_labels[j]) convergence")
+        hlines!(ax, [A_target[j]]; color=:gray, linestyle=:dot, linewidth=2)
+        for sym in (:analytic, :gaussian, :neural, :finite_diff)
+            col = get(mapping, sym, nothing); isnothing(col) && continue
+            haskey(calib, sym) || continue
+            its = 1:size(calib[sym][:G_iters], 2)
+            Gj = calib[sym][:G_iters][j, :]
+            # Add lines; legend already captured from parameter row
+            lines!(ax, its, Gj; color=col, linewidth=3)
+        end
+    end
+    # Unified legend at bottom (row 3)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
+    leg.halign = :center
+    fig[3,1] = leg
     fig
 end
 
@@ -253,8 +307,8 @@ function main()
     save_figure(fig_score_and_jac(meta, score), "score_jacobian_reduced1d.png")
     save_figure(fig_conjugate(meta, conjugate), "conjugate_B_reduced1d.png")
     save_figure(fig_responses(meta, responses), "response_functions_reduced1d.png")
-    save_figure(fig_calibration(meta, calib, data), "calibration_results_reduced1d.png")
-    save_figure(fig_parameter_trajectories(meta, calib), "parameter_trajectories_reduced1d.png")
+    # Replaced separate calibration & parameter trajectory figures with merged figure
+    save_figure(fig_calibration_and_parameters(meta, calib, data), "calibration_parameters_reduced1d.png")
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

@@ -17,17 +17,34 @@ Notes:
  extend behavior (e.g., noise control, CRN) without touching callers.
 """
 function simulate(u0::AbstractVector, drift!::Function, sigma!::Function; spec::SimSpec)
-    X = FastSDE.evolve(
-        collect(Float64.(u0)),
-        spec.dt,
-        spec.Nsteps,
-        drift!,
-        sigma!;
+    kwargs = (
         timestepper = spec.timestepper,
         resolution   = spec.resolution,
         sigma_inplace= spec.sigma_inplace,
         n_ens        = spec.n_ens,
         seed         = spec.seed,
     )
-    return Float64.(X)
+    if spec.lb !== nothing && spec.gb !== nothing
+        lbv = spec.lb; gbv = spec.gb
+        X = FastSDE.evolve(
+            collect(Float64.(u0)),
+            spec.dt,
+            spec.Nsteps,
+            drift!,
+            sigma!;
+            kwargs...,
+            boundary = (lbv, gbv),
+        )
+        return Float64.(X)
+    else
+        X = FastSDE.evolve(
+            collect(Float64.(u0)),
+            spec.dt,
+            spec.Nsteps,
+            drift!,
+            sigma!;
+            kwargs...,
+        )
+        return Float64.(X)
+    end
 end

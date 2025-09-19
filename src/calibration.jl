@@ -1,3 +1,6 @@
+using Plots
+using Printf
+
 
 
 function weight_inverse_cov(A_of_x::Function, X_obs::AbstractMatrix; base_jitter::Real=1e-8, max_tries::Int=5)
@@ -27,6 +30,62 @@ function weight_inverse_cov(A_of_x::Function, X_obs::AbstractMatrix; base_jitter
     # Build inverse via a single solve; chol \ I returns (Σ + jitter*I)^{-1}
     W = chol \ I
     return Symmetric(Matrix(W))
+end
+
+@inline function _call_make_A_of_x(make_A_of_x::Function, μ::AbstractVector, Σ::AbstractVector)
+    if applicable(make_A_of_x, μ, Σ)
+        return make_A_of_x(μ, Σ)
+    elseif applicable(make_A_of_x, μ[1], Σ[1])
+        return make_A_of_x(μ[1], Σ[1])
+    else
+        error("make_A_of_x does not accept (μ::Vector, Σ::Vector) nor scalars. Provide a compatible callable.")
+    end
+end
+
+function stats_A(X::AbstractMatrix, A_of_x::Function)
+    T = size(X, 2)
+    m = length(A_of_x(@view X[:, 1]))
+    A = zeros(Float64, m)
+    @inbounds for t in 1:T
+        A .+= A_of_x(@view X[:, t])
+    end
+    A ./= max(T, 1)
+    return A
+end
+
+function score_callback!(X_norm::AbstractMatrix, s_fn::Function; dt::Real, Nsteps::Integer, method::Symbol, iteration::Integer, lb::Union{Nothing,Float64}=nothing, gb::Union{Nothing,Float64}=nothing)
+    dt > 0 || return
+    Nsteps > 0 || return
+    d, _ = size(X_norm)
+    x0 = copy(vec(X_norm[:, 1]))
+    drift! = function (du, u, t)
+        sval = s_fn(Vector{Float64}(u))
+        du .= Float64.(sval)
+    end
+    sqrt2 = sqrt(2.0)
+    sigma! = (du, u, t) -> (du .= sqrt2)
+    if lb !== nothing || gb !== nothing
+        @assert (lb !== nothing && gb !== nothing) "Provide both lb and gb or neither."
+        traj = FastSDE.evolve(copy(x0), dt, Nsteps, drift!, sigma!; timestepper=:euler, resolution=1, sigma_inplace=true, n_ens=1, boundary=(lb, gb))
+    else
+        traj = FastSDE.evolve(copy(x0), dt, Nsteps, drift!, sigma!; timestepper=:euler, resolution=1, sigma_inplace=true, n_ens=1)
+    end
+    X_sim = Float64.(traj)
+    figdir = joinpath(pwd(), "figures", "callback")
+    mkpath(figdir)
+    plt = plot(layout=(d, 1), size=(800, max(240, 240 * d)))
+    for i in 1:d
+        obs = vec(X_norm[i, :])
+        sim = vec(X_sim[i, :])
+        legendpos = i == 1 ? :topright : :none
+        histogram!(plt, obs; subplot=i, normalize=:pdf, bins=:auto, alpha=0.4, label=i == 1 ? "observed" : "", color=:steelblue, legend=legendpos)
+        histogram!(plt, sim; subplot=i, normalize=:pdf, bins=:auto, alpha=0.4, label=i == 1 ? "score" : "", color=:darkorange, legend=legendpos)
+        xlabel!(plt, "x_$(i)"; subplot=i)
+        ylabel!(plt, "pdf"; subplot=i)
+        title!(plt, "Dimension $(i)"; subplot=i)
+    end
+    filename = joinpath(figdir, @sprintf("score_callback_%s_iter%02d.png", String(method), iteration))
+    savefig(plt, filename)
 end
 
 function make_regularizer(θ::AbstractVector; λ::Real=0.0, λvec::AbstractVector=nothing, Cprior::AbstractMatrix=nothing, θprior::AbstractVector=nothing)
@@ -66,7 +125,7 @@ end
                      θ0, Δt, Tmax; nn_cfg=nothing, make_analytic_score=nothing,
                      make_simulator_norm=nothing, W=nothing, Γ=nothing,
                      free_idx=nothing, maxiters=8, tol_θ=1e-6, damping=1.0,
-                     mean_center=true, adapt_W=false)
+                     mean_center=true, adapt_W=false, line_search=false, line_search_max=4)
 
 Iterative plain-Newton calibration for a single specified `method` using precomputed target observables `A_target`.
 
@@ -88,6 +147,10 @@ Key arguments:
     for these indices (others receive zero update); for analytic / gaussian / neural methods the
     full Jacobian is built and then restricted.
 - `mean_center`: whether to mean-center responses where applicable.
+- `line_search`: enable backtracking step halving based on observable distance.
+- `line_search_max`: maximum number of halvings attempted per iteration when `line_search=true`.
+- `callback`: when true and method is Gaussian/Neural, generates score-based diagnostic figures each iteration.
+- `callback_dt`, `callback_Nsteps`: integration settings for the callback simulator (ignored when `callback=false`).
 
 Returns: NamedTuple with fields `θ, θ_path, G_list, S_list, A_target, W, Γ, nn, adapt_W`.
 
@@ -106,14 +169,17 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
                           Γ::Union{Nothing,Symmetric}=nothing,
                           free_idx::Union{Nothing,AbstractVector{<:Integer}}=nothing,
                           maxiters::Integer=8, tol_θ::Real=1e-6, damping::Real=1.0,
-                          mean_center::Bool=true, adapt_W::Bool=false)
+                          mean_center::Bool=true, adapt_W::Bool=false,
+                          line_search::Bool=false, line_search_max::Integer=4,
+                          callback::Bool=false, callback_dt::Real=0.0, callback_Nsteps::Integer=0,
+                          lb::Union{Nothing,Float64}=nothing, gb::Union{Nothing,Float64}=nothing)
 
     # Weight matrix initialisation: if provided externally keep as fixed; otherwise build from θ0.
     # If adapt_W=true and W not supplied, W will be recomputed each iteration from current trajectory.
     if W === nothing
         X_init_obs = simulator_obs(θ0)
         μ_init = vec(mean(X_init_obs, dims=2)); Σ_init = vec(std(X_init_obs, dims=2))
-        A_init, _ = make_A_of_x(μ_init[1], Σ_init[1])
+            A_init, _ = _call_make_A_of_x(make_A_of_x, μ_init, Σ_init)
         Wmat_initial = weight_inverse_cov(A_init, (X_init_obs .- μ_init) ./ Σ_init)
     else
         Wmat_initial = Symmetric(Matrix(W))
@@ -131,6 +197,13 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
     for _it in 1:maxiters
         ProgressMeter.next!(p)
         push!(θ_path, copy(θ))
+        # First iteration can optionally reuse a shared initial state to align starting observables across methods
+        local Xobs::AbstractMatrix
+        local μ::Vector{Float64}
+        local Σ::Vector{Float64}
+        local Xn::Array{Float64,2}
+        local A_of_x_iter::Function
+        local G::Vector{Float64}
         # Simulate model trajectory and exit early if it is invalid 
         Xobs = simulator_obs(θ)
         μ = vec(mean(Xobs, dims=2)); Σ = vec(std(Xobs, dims=2))
@@ -140,7 +213,7 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
             break
         end
         # Build model observables
-        A_of_x_iter, _ = make_A_of_x(μ[1], Σ[1])
+        A_of_x_iter, _ = _call_make_A_of_x(make_A_of_x, μ, Σ)
         # Use normalized trajectory for observables (A_of_x expects normalized x)
         G = stats_A(Xn, A_of_x_iter)
         push!(G_list, copy(G))
@@ -159,8 +232,12 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
                                      mean_center=mean_center, analytic_builder=analytic_builder,
                                      A_of_x=A_of_x_iter, store_response=false).S
         elseif method isa GFDTGaussianScore
-            build_gaussian_estimator(Xn, base_model, θ; Δt=Δt, Tmax=Tmax,
-                                     mean_center=mean_center, A_of_x=A_of_x_iter, store_response=false).S
+            est_gauss = build_gaussian_estimator(Xn, base_model, θ; Δt=Δt, Tmax=Tmax,
+                                     mean_center=mean_center, A_of_x=A_of_x_iter, store_response=false)
+            if callback
+                score_callback!(Xn, est_gauss.model_view.s; dt=callback_dt, Nsteps=callback_Nsteps, method=:gaussian, iteration=_it, lb=lb, gb=gb)
+            end
+            est_gauss.S
         elseif method isa GFDTNeuralScore
             @assert nn_cfg !== nothing "Provide `nn_cfg` for GFDTNeuralScore training."
             # Policy: if preprocessing==true, train from scratch each iteration; else continue training
@@ -168,6 +245,9 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
             est_nn, nn_new = build_neural_estimator(Xn, base_model, θ, nn_cfg; Δt=Δt, Tmax=Tmax,
                                                     mean_center=mean_center, A_of_x=A_of_x_iter,
                                                     store_response=false, nn=nn_in)
+            if callback
+                score_callback!(Xn, est_nn.model_view.s; dt=callback_dt, Nsteps=callback_Nsteps, method=:neural, iteration=_it, lb=lb, gb=gb)
+            end
             nn_current = nn_new
             est_nn.S
         elseif method isa FiniteDifference
@@ -202,7 +282,7 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
         end
 
         Δθ_sub, _diag = newton_step(S_use, Wmat_current, Γ_use, G, A_target; jitter=1e-10)
-        # Build full update vector for convergence check and apply update
+        # Build full update vector for convergence check
         Δθ_all = if length(Δθ_sub) == length(θ)
             Δθ_sub
         else
@@ -212,16 +292,63 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
             end
             Δθ_full
         end
-        θ .-= damping .* Δθ_all
+        prev_distance = norm(G .- A_target)
+        actual_step = similar(θ)
+        if line_search
+            θ_base = copy(θ)
+            step_scale = damping
+            attempt = 0
+            success = false
+            while true
+                θ_candidate = θ_base .- step_scale .* Δθ_all
+                X_ls = simulator_obs(θ_candidate)
+                μ_ls = vec(mean(X_ls, dims=2))
+                Σ_ls = vec(std(X_ls, dims=2))
+                Xn_ls = (X_ls .- μ_ls) ./ Σ_ls
+                dist_candidate = Inf
+                A_ls = nothing
+                G_ls = nothing
+                if all(isfinite, Xn_ls)
+                    A_ls, _ = _call_make_A_of_x(make_A_of_x, μ_ls, Σ_ls)
+                    G_ls = stats_A(Xn_ls, A_ls)
+                    dist_candidate = norm(G_ls .- A_target)
+                end
+                if dist_candidate <= prev_distance
+                    @assert A_ls !== nothing && G_ls !== nothing
+                    θ .= θ_candidate
+                    actual_step .= θ_base .- θ
+                    μ = μ_ls
+                    Σ = Σ_ls
+                    Xn = Xn_ls
+                    A_of_x_iter = A_ls
+                    G = G_ls
+                    G_list[end] = copy(G_ls)
+                    success = true
+                    break
+                else
+                    attempt += 1
+                    if attempt > line_search_max
+                        break
+                    end
+                    step_scale *= 0.5
+                end
+            end
+            if !success
+                @warn "Calibration: line search failed to reduce observable distance; exiting loop" iteration=_it
+                break
+            end
+        else
+            actual_step .= damping .* Δθ_all
+            θ .-= actual_step
+        end
 
         # Adaptive weight matrix update (only when not user-supplied and flag is on)
         if adapt_W && W === nothing
             # Recompute W from current normalized trajectory and updated observables
-            # Rebuild A_of_x with new statistics (already μ, Σ from current iteration)
-            A_adapt, _ = make_A_of_x(μ[1], Σ[1])
+            A_adapt, _ = _call_make_A_of_x(make_A_of_x, μ, Σ)
             Wmat_current = weight_inverse_cov(A_adapt, Xn)
         end
-        if norm(Δθ_all) / max(norm(θ), eps()) ≤ tol_θ
+        if norm(actual_step) / max(norm(θ), eps()) ≤ tol_θ
             break
         end
     end

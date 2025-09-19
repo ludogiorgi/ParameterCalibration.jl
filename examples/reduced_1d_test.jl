@@ -26,6 +26,43 @@ using Statistics, Random, LinearAlgebra, Printf
 using GLMakie
 using KernelDensity
 
+function reduced1d_observable_factory(; use_moments=(:m1, :m2), use_indicators=(), thresholds::NamedTuple = (;))
+    moms = use_moments isa Tuple ? use_moments : (use_moments,)
+    inds = use_indicators isa Tuple ? use_indicators : (use_indicators,)
+    α = hasproperty(thresholds, :α) ? getfield(thresholds, :α) : nothing
+    β = hasproperty(thresholds, :β) ? getfield(thresholds, :β) : nothing
+    return function (μ_phys::Real, Σ_phys::Real)
+        fns = Vector{Function}()
+        labels = String[]
+        for m in moms
+            if m === :m1
+                push!(fns, u -> u);           push!(labels, "u")
+            elseif m === :m2
+                push!(fns, u -> u^2);         push!(labels, "u^2")
+            elseif m === :m3
+                push!(fns, u -> u^3);         push!(labels, "u^3")
+            elseif m === :m4
+                push!(fns, u -> u^4);         push!(labels, "u^4")
+            else
+                error("Unknown moment symbol \$(m)")
+            end
+        end
+        if :ge in inds
+            @assert α !== nothing "Thresholds must include :α when using :ge indicator"
+            push!(fns, u -> (u ≥ α ? 1.0 : 0.0)); push!(labels, "1{u≥α}")
+        end
+        if :le in inds
+            @assert β !== nothing "Thresholds must include :β when using :le indicator"
+            push!(fns, u -> (u ≤ β ? 1.0 : 0.0)); push!(labels, "1{u≤β}")
+        end
+        function A_of_x(x::AbstractVector)
+            u = x[1] * Σ_phys + μ_phys
+            return Float64[f(u) for f in fns]
+        end
+        return (A_of_x, labels)
+    end
+end
+
 # --------------------------------------------------------------------------------------
 # Load configuration
 # --------------------------------------------------------------------------------------
@@ -66,7 +103,7 @@ use_moments    = Tuple(extra.observables.use_moments)
 use_indicators = Tuple(extra.observables.use_indicators)
 # p_indicator removed in updated config; thresholds now supplied directly
 thresholds_cfg = extra.observables.thresholds
-make_A_of_x = PC.build_make_A_of_x(; use_moments=use_moments, use_indicators=use_indicators, thresholds=thresholds_cfg)
+make_A_of_x = reduced1d_observable_factory(; use_moments=use_moments, use_indicators=use_indicators, thresholds=thresholds_cfg)
 A_of_x_tmp, obs_labels_tmp = make_A_of_x(μ_phys, Σ_phys)
 const A_of_x = A_of_x_tmp
 const obs_labels = obs_labels_tmp

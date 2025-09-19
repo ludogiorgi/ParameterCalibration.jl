@@ -2,7 +2,7 @@
 
 [simulation]
 dt = 0.01
-Nsteps = 10_000
+Nsteps = 100_000
 resolution = 10
 n_ens = 100
 u0 = [0.0]
@@ -39,16 +39,14 @@ show_progress = false
 use_moments = ["m1", "m2"]
 # Indicator functions to include: "ge" for 1{u≥α}, "le" for 1{u≤β}
 use_indicators = ["le"]
-# Probability p used to define α and β thresholds
-thresholds = [-1.0, 2.0]
 
 [calibration]
 # Methods to run: any subset of ["analytic", "gaussian", "neural", "finite_diff"]
 methods = ["analytic", "gaussian", "neural", "finite_diff"]
 # Maximum Newton iterations
-maxiters = 6
+maxiters = 10
 # Newton step tolerance on relative parameter change
-tol_theta = 1e-6
+tol_theta = 1e-3
 # Damping factor for Newton updates
 damping = 1.0
 # Whether to mean-center A and B when building responses
@@ -59,6 +57,11 @@ rng_offset = 1
 theta_init_multipliers = [1.2, 1.2, 1.0, 1.0, 1.2]
 # Optional: indices (1-based) of free parameters to tune (omit to use all)
 free_idx = [1, 2, 5]
+line_search = false
+line_search_max = 4
+callback = false
+callback_dt = 0.01
+callback_Nsteps = 20000
 
 [plots]
 xs_min = -2.5

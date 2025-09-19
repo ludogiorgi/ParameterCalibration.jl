@@ -47,6 +47,43 @@ const S_TXT_FILE = joinpath(RESULT_DIR, "S_matrices.txt")
 
 mkpath(RESULT_DIR)
 
+function reduced1d_observable_factory(; use_moments=(:m1, :m2), use_indicators=(), thresholds::NamedTuple = (;))
+    moms = use_moments isa Tuple ? use_moments : (use_moments,)
+    inds = use_indicators isa Tuple ? use_indicators : (use_indicators,)
+    α = hasproperty(thresholds, :α) ? getfield(thresholds, :α) : nothing
+    β = hasproperty(thresholds, :β) ? getfield(thresholds, :β) : nothing
+    return function (μ_phys::Real, Σ_phys::Real)
+        fns = Vector{Function}()
+        labels = String[]
+        for m in moms
+            if m === :m1
+                push!(fns, u -> u);           push!(labels, "u")
+            elseif m === :m2
+                push!(fns, u -> u^2);         push!(labels, "u^2")
+            elseif m === :m3
+                push!(fns, u -> u^3);         push!(labels, "u^3")
+            elseif m === :m4
+                push!(fns, u -> u^4);         push!(labels, "u^4")
+            else
+                error("Unknown moment symbol \$(m)")
+            end
+        end
+        if :ge in inds
+            @assert α !== nothing "Thresholds must include :α when using :ge indicator"
+            push!(fns, u -> (u ≥ α ? 1.0 : 0.0)); push!(labels, "1{u≥α}")
+        end
+        if :le in inds
+            @assert β !== nothing "Thresholds must include :β when using :le indicator"
+            push!(fns, u -> (u ≤ β ? 1.0 : 0.0)); push!(labels, "1{u≤β}")
+        end
+        function A_of_x(x::AbstractVector)
+            u = x[1] * Σ_phys + μ_phys
+            return Float64[f(u) for f in fns]
+        end
+        return (A_of_x, labels)
+    end
+end
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -149,7 +186,7 @@ function run_pipeline(; verbose=true, save_path=RESULT_FILE)
     use_moments    = Tuple(extra.observables.use_moments)
     use_indicators = Tuple(extra.observables.use_indicators)
     thresholds     = extra.observables.thresholds
-    make_A_of_x = PC.build_make_A_of_x(; use_moments=use_moments, use_indicators=use_indicators, thresholds=thresholds)
+    make_A_of_x = reduced1d_observable_factory(; use_moments=use_moments, use_indicators=use_indicators, thresholds=thresholds)
     A_of_x, obs_labels = make_A_of_x(μ[1], Σ[1])
     # IMPORTANT: A_of_x is defined on normalized coordinates; use X (normalized)
     A_target = PC.stats_A(X, A_of_x)
@@ -218,7 +255,13 @@ function run_pipeline(; verbose=true, save_path=RESULT_FILE)
             tol_θ=extra.calibration.tol_θ,
             damping=extra.calibration.damping,
             mean_center=extra.calibration.mean_center,
-            free_idx=extra.calibration.free_idx)
+            free_idx=extra.calibration.free_idx,
+            line_search=extra.calibration.line_search,
+            line_search_max=extra.calibration.line_search_max,
+            callback=extra.calibration.callback,
+            callback_dt=extra.calibration.callback_dt,
+            callback_Nsteps=extra.calibration.callback_Nsteps,
+            lb=sim_cfg.lb, gb=sim_cfg.gb)
         results[sym] = res
     end
 

@@ -1,0 +1,65 @@
+# Configuration for the triad example
+
+[simulation]
+dt = 0.01
+Nsteps = 100_000
+resolution = 10
+n_ens = 100
+u0 = [0.0, 0.0, 0.0]
+burn_in = 0
+timestepper = "euler"
+sigma_inplace = true
+noise = "shared"
+rng_seed = 450123
+lb = -5.0
+gb = 5.0
+
+[score_nn]
+preprocessing = true
+sigma = 0.1
+epochs = 1000
+epochs_re = 200
+batch_size = 32
+lr = 1.0e-3
+neurons = [128, 64]
+use_gpu = false
+jacobian = true
+probes = 1
+verbose = true
+
+[score_nn.kgmm]
+prob = 0.002
+conv_param = 1.0e-3
+show_progress = false
+
+[observables]
+dt_multiplier = 1.0
+Tmax = 12.0
+
+[calibration]
+methods = ["gaussian", "neural", "finite_diff"]
+maxiters = 10
+tol_theta = 1.0e-3
+damping = 1
+mean_center = true
+rng_offset = 2
+theta_init_multipliers = [1.2, 0.8, 1.1, 1.2, 0.9, 1.05]
+free_idx = [1, 2, 3, 4, 5, 6]
+line_search = false
+line_search_max = 5
+callback = true
+callback_dt = 0.01
+callback_Nsteps = 20_000
+
+[plots]
+xs_min = -3.0
+xs_max = 3.0
+xs_len = 200
+
+[triad_model]
+d_u = 0.2
+w_u = 0.4
+d_t = 2.0
+sigma1 = 0.3
+sigma2 = 0.3
+sigma3 = 1.5

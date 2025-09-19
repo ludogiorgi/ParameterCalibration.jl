@@ -9,7 +9,7 @@ using KernelDensity
 using FastSDE
 
 # ---------------- 3D Triad SDE ----------------
-const params = (dᵤ=0.2, wᵤ=0.4, dₜ=2.0, σ₁=0.3, σ₂=0.3)
+const params = (dᵤ=0.2, wᵤ=0.4, dₜ=2.0, σ₁=0.3, σ₂=0.3, σ₃=1.5)
 
 dim = 3
 dt = 0.01
@@ -26,7 +26,7 @@ end
 function diffusion!(du, u, t)
     du[1] = params.σ₁
     du[2] = params.σ₂
-    du[3] = 1.5 * (tanh(u[1]) + 1)
+    du[3] = params.σ₃ * (tanh(u[1]) + 1)
 end
 
 obs_nn = evolve(u0, dt, Nsteps, drift!, diffusion!;
@@ -39,4 +39,3 @@ M = mean(obs_nn, dims=2)
 S = std(obs_nn, dims=2)
 obs = (obs_nn .- M) ./ S
 obs_uncorr = obs
-

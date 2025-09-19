@@ -17,7 +17,6 @@ include("finite_diff.jl")
 include("fastsde.jl")
 include("config.jl")
 include("estimators_builders.jl")
-include("observables.jl")
 
 export
     # Types
@@ -54,6 +53,6 @@ export
     build_gaussian_estimator,
     build_neural_estimator,
     build_finite_diff_estimator,
-    stats_A, build_A_of_x, build_make_A_of_x
+    stats_A
 
 end # module

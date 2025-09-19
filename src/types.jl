@@ -46,6 +46,8 @@ Base.@kwdef struct SimSpec
     noise::Symbol = :shared   # :shared or :independent (reserved)
     Δt_multiplier::Float64 = 1.0
     Tmax::Float64 = 10.0
+    lb::Union{Nothing,Float64} = nothing   # optional scalar lower bound
+    gb::Union{Nothing,Float64} = nothing   # optional scalar upper bound ("gb" naming retained)
 end
 
 # Method tags for building sensitivities

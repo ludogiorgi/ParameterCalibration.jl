@@ -277,7 +277,11 @@ function fig_responses(meta, responses, ts)
 end
 
 function fig_calibration(meta, calibration, A_target)
-    methods = sort(collect(keys(calibration))); isempty(methods) && return nothing
+    # Enforce explicit ordering for legend (Finite diff right after Analytic)
+    available = Set(keys(calibration))
+    preferred = [:analytic, :finite_diff, :gaussian, :neural]
+    methods = [m for m in preferred if m in available]
+    isempty(methods) && return nothing
     expected = Set(meta[:calibration_methods])
     missing = setdiff(expected, Set(methods))
     !isempty(missing) && @warn "Some calibration methods missing from file" missing
@@ -336,7 +340,7 @@ end
 Clean combined figure with single legend (boxed), mapped labels (Neural->KGMM),
 moderate fonts. Top row: observable convergence; bottom row: parameter trajectories.
 """
-function fig_calibration_and_parameters(meta, calibration, A_target; basefontsize=30)
+function fig_calibration_and_parameters(meta, calibration, A_target; basefontsize=26)
     methods = sort(collect(keys(calibration))); isempty(methods) && return nothing
     θ_true = meta[:θ_true]; pnames = meta[:pnames]; P = length(pnames)
     obs_labels = meta[:obs_labels]; m = length(obs_labels)
@@ -348,13 +352,16 @@ function fig_calibration_and_parameters(meta, calibration, A_target; basefontsiz
     )
     local_theme = publication_theme(basefontsize=basefontsize, ticksize=round(Int, 0.70*basefontsize))
     return with_theme(local_theme) do
-        fig = Figure(resolution=(max(280*P, 280*m), 2*280 + 110))
+    # Increased overall height slightly for better vertical spacing between rows
+    # Previous height components: 2*250 + 100 = 600
+    # New height: 2*280 + 110 = 670 (~11% increase)
+    fig = Figure(resolution=(max(260*P, 260*m), 2*280 + 110))
         grid_top = fig[1,1] = GridLayout(tellwidth=false)
         grid_bot = fig[2,1] = GridLayout(tellwidth=false)
         line_objs = Makie.AbstractPlot[]; labels = String[]; seen = Set{Symbol}()
         # Top row (observables)
         for j in 1:m
-            ax = Axis(grid_top[1,j], xlabel = "", ylabel = j==1 ? obs_labels[j] : "", title = obs_labels[j])
+            ax = Axis(grid_top[1,j], xlabel = "", ylabel = j==1 ? "Aᵢ" : "", title = obs_labels[j])
             hlines!(ax, [A_target[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
             for sym in methods
                 G = calibration[sym][:G_iters]; its = 1:size(G,2)
@@ -369,7 +376,7 @@ function fig_calibration_and_parameters(meta, calibration, A_target; basefontsiz
         end
         # Bottom row (parameters)
         for (j, pname) in enumerate(pnames)
-            ax = Axis(grid_bot[1,j], xlabel = "iteration", ylabel = j==1 ? "θ" : "", title = pname)
+            ax = Axis(grid_bot[1,j], xlabel = "iteration", ylabel = j==1 ? "θᵢ" : "", title = pname)
             hlines!(ax, [θ_true[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
             for sym in methods
                 θ_iters = calibration[sym][:θ_iters]; its = 1:size(θ_iters, 2)

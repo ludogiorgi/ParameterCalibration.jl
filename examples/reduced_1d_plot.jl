@@ -241,55 +241,58 @@ function fig_parameter_trajectories(meta, calib)
     fig
 end
 
-# Figure 6 (new): Merged parameter trajectories (perturbed only) + observable convergence -------
-function fig_calibration_and_parameters(meta, calib, data; tol=1e-12)
-    pnames = meta[:pnames]; θ_true = meta[:θ_true]; θ_init = meta[:θ_init]
+"""
+    fig_calibration_and_parameters(meta, calib, data; basefontsize=22)
+
+Combined figure (reduced 1D) matching triad layout style:
+Top row: observable convergence (Aᵢ) with unified y-axis label only on first panel.
+Bottom row: parameter trajectories (θᵢ) with unified y-axis label only on first panel.
+Single legend (boxed) with consistent labels (Analytical, Gaussian, KGMM, Finite diff).
+"""
+function fig_calibration_and_parameters(meta, calib, data; basefontsize=22, tol=1e-12)
     obs_labels = meta[:obs_labels]; A_target = data[:A_target]
-    # Identify perturbed parameters (initial value differs from true) within tolerance
-    perturbed = findall(j -> !(isapprox(θ_true[j], θ_init[j]; atol=tol, rtol=0.0)), eachindex(θ_true))
-    if isempty(perturbed)
-        perturbed = collect(eachindex(θ_true))  # fallback: show all
+    pnames = meta[:pnames]; θ_true = meta[:θ_true]; θ_init = meta[:θ_init]
+    # Identify varied parameters (exclude those unchanged within tolerance)
+    varied = [j for j in eachindex(θ_true) if !isapprox(θ_true[j], θ_init[j]; atol=tol, rtol=0.0)]
+    if isempty(varied)
+        varied = collect(eachindex(θ_true))  # fallback: show all if detection fails
     end
-    npert = length(perturbed); m = length(obs_labels)
-    # Layout: two stacked GridLayouts so column counts may differ
-    fig = Figure(resolution=(max(420*npert, 420*m), 480 + 480))
+    m = length(obs_labels); P = length(varied)
+    mapping = Dict(:analytic=>COL_ANALYTIC, :finite_diff=>COL_FD, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL)
+    label_map = Dict(:analytic=>"Analytical", :finite_diff=>"Finite diff", :gaussian=>"Gaussian", :neural=>"KGMM")
+    preferred = [:analytic, :finite_diff, :gaussian, :neural]
+    # Figure size scaled to panel count
+    fig = Figure(resolution=(max(300*m, 300*P), 2*250 + 100))
     top = fig[1,1] = GridLayout()
     bottom = fig[2,1] = GridLayout()
-    mapping = Dict(:analytic=>COL_ANALYTIC, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL, :finite_diff=>COL_FD)
-    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"KGMM", :finite_diff=>"Finite diff")
-    line_objs = Makie.AbstractPlot[]; labels = String[]
-    # Row 1: parameter trajectories (perturbed only)
-    for (colidx, j) in enumerate(perturbed)
-        pn = pnames[j]
-    ax = Axis(top[1, colidx]); styled_axis!(ax; xlabel="iteration", ylabel=pn, title=pn * " convergence")
-        hlines!(ax, [θ_true[j]]; color=:gray, linestyle=:dot, linewidth=2)
-        # Use a fixed ordered list of methods for stable legend ordering
-        for sym in (:analytic, :gaussian, :neural, :finite_diff)
-            col = get(mapping, sym, nothing); isnothing(col) && continue
+    line_objs = Makie.AbstractPlot[]; labels = String[]; seen = Set{Symbol}()
+    # Row 1: observable convergence (Aᵢ)
+    for j in 1:m
+        ax = Axis(top[1,j]); styled_axis!(ax; xlabel="", ylabel = j==1 ? "Aᵢ" : "", title = obs_labels[j])
+        hlines!(ax, [A_target[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
+        for sym in preferred
             haskey(calib, sym) || continue
-            θ_iters = calib[sym][:θ_iters]
-            if colidx == 1
-                push!(line_objs, lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=col, linewidth=3)); push!(labels, label_map[sym])
-            else
-                lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=col, linewidth=3)
+            G = calib[sym][:G_iters]
+            its = 1:size(G,2)
+            plt = lines!(ax, its, G[j,:]; color=get(mapping, sym, :black), linewidth=3)
+            if !(sym in seen)
+                push!(line_objs, plt); push!(labels, label_map[sym]); push!(seen, sym)
             end
         end
     end
-    # Row 2: observable convergence
-    for j in 1:m
-        ax = Axis(bottom[1,j]); styled_axis!(ax; xlabel="iteration", ylabel=obs_labels[j], title="$(obs_labels[j]) convergence")
-        hlines!(ax, [A_target[j]]; color=:gray, linestyle=:dot, linewidth=2)
-        for sym in (:analytic, :gaussian, :neural, :finite_diff)
-            col = get(mapping, sym, nothing); isnothing(col) && continue
+    # Row 2: parameter trajectories (θᵢ)
+    for (k_local, j) in enumerate(varied)
+        pname = pnames[j]
+        ax = Axis(bottom[1,k_local]); styled_axis!(ax; xlabel="iteration", ylabel = k_local==1 ? "θᵢ" : "", title = pname)
+        hlines!(ax, [θ_true[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
+        for sym in preferred
             haskey(calib, sym) || continue
-            its = 1:size(calib[sym][:G_iters], 2)
-            Gj = calib[sym][:G_iters][j, :]
-            # Add lines; legend already captured from parameter row
-            lines!(ax, its, Gj; color=col, linewidth=3)
+            θ_iters = calib[sym][:θ_iters]
+            lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=get(mapping, sym, :black), linewidth=3)
         end
     end
-    # Unified legend at bottom (row 3)
-    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
+    # Legend
+    leg = Legend(fig, line_objs, labels; orientation=:horizontal, framevisible=true, tellwidth=false)
     leg.halign = :center
     fig[3,1] = leg
     fig

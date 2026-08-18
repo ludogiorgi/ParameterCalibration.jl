@@ -18,6 +18,22 @@ using GLMakie
 using LinearAlgebra, Statistics, Printf
 using HDF5
 
+# ---- Optional overrides & renaming ----------------------------------------------------
+# Custom panel titles (set to nothing to fall back). These are DISPLAY order only.
+const CUSTOM_PARAM_TITLES = ["dᵤ","wᵤ","dₜ","σ₁","σ₂","σ₃"]  # or nothing
+const CUSTOM_OBS_TITLES   = ["u₁²","u₂²","u₁u₂","τ²","u₁τ","u₂τ"]  # or nothing
+const ENABLE_GRID_ALL     = true     # add faint grid to all axes in combined figure
+
+# Optional observable label override (after loading) – set to nothing to keep file values
+const OVERRIDE_OBS_LABELS = nothing  # e.g. ["u₁²","u₂²", ...]
+
+# Non-destructive parameter rename map (original meta[:pnames] order preserved)
+const PNAMES_RENAME_MAP = Dict(
+    "d_u" => "dᵤ",
+    "w_u" => "wᵤ",
+    "d_t" => "dₜ",
+)
+
 const DATA_FILE = joinpath(@__DIR__, "data", "triad_results.h5")
 const FIG_DIR = joinpath(@__DIR__, "..", "figures")
 mkpath(FIG_DIR)
@@ -42,7 +58,7 @@ color_for(sym::Symbol) = get(METHOD_COLORS, sym, :gray40)
 const PANEL_BG = RGBAf(1,1,1,1)
 const FIG_BG   = RGBAf(1,1,1,1)
 
-function publication_theme(; basefontsize=40, fontname="Helvetica", ticksize=30)
+function publication_theme(; basefontsize=40, fontname="Helvetica", ticksize=30, grids=false)
     Theme(
         fontsize = basefontsize,
         font = fontname,
@@ -53,8 +69,12 @@ function publication_theme(; basefontsize=40, fontname="Helvetica", ticksize=30)
             ylabelsize = basefontsize,
             titlesize  = basefontsize+6,
             titlealign = :left,
-            xgridvisible = false,
-            ygridvisible = false,
+            xgridvisible = grids,
+            ygridvisible = grids,
+            xgridcolor = (:gray, 0.25),
+            ygridcolor = (:gray, 0.25),
+            xgridwidth = 0.6,
+            ygridwidth = 0.6,
             xticklabelsize = ticksize,
             yticklabelsize = ticksize,
             spinewidth = 1.1,
@@ -116,6 +136,17 @@ end
 function load_data(path::AbstractString)
     @assert isfile(path) "Data file not found: $(path). Run triad_compute.jl first."
     h5open(path, "r") do h
+        # Fallback: some files may lack meta/calibration_methods
+        calib_methods = begin
+            meta_group = h["meta"]
+            if haskey(meta_group, "calibration_methods")
+                Symbol.(read(h, "meta/calibration_methods"))
+            elseif haskey(h, "calibration")
+                Symbol.(keys(h["calibration"]) |> collect)
+            else
+                Symbol[]
+            end
+        end
         meta = Dict(
             :θ_true => read(h, "meta/θ_true"),
             :θ_init => read(h, "meta/θ_init"),
@@ -125,7 +156,7 @@ function load_data(path::AbstractString)
             :pnames => read(h, "meta/pnames"),
             :state_labels => read(h, "meta/state_labels"),
             :methods => Symbol.(read(h, "meta/methods")),
-            :calibration_methods => Symbol.(read(h, "meta/calibration_methods")),
+            :calibration_methods => calib_methods,
             :x_norm => read(h, "slice/x_norm"),
             :x_phys => read(h, "slice/x_phys"),
             :x_axis => read(h, "slice/x_axis"),
@@ -157,12 +188,16 @@ function load_data(path::AbstractString)
             jacobian[Symbol(name)] = read(h, joinpath("jacobian", name))
         end
         calibration = Dict{Symbol,Dict{Symbol,Array{Float64}}}()
-        for name in keys(h["calibration"]) |> collect
-            grp = h["calibration"][name]
-            calibration[Symbol(name)] = Dict(
-                :θ_iters => read(grp["θ_iters"]),
-                :G_iters => read(grp["G_iters"]),
-            )
+        if haskey(h, "calibration")
+            for name in keys(h["calibration"]) |> collect
+                grp = h["calibration"][name]
+                calibration[Symbol(name)] = Dict(
+                    :θ_iters => read(grp["θ_iters"]),
+                    :G_iters => read(grp["G_iters"]),
+                )
+            end
+        else
+            @warn "No calibration group present in file; skipping calibration figures"
         end
         return (meta = meta, data = data, score = score, conjugate = conjugate,
                 responses = responses, jacobian = jacobian, calibration = calibration,
@@ -180,6 +215,36 @@ calibration = data.calibration
 A_target = data.data[:A_target]
 ts = data.ts
 xs_phys = meta[:x_phys][1, :]
+
+# Apply observable label override if enabled and length matches
+if OVERRIDE_OBS_LABELS !== nothing
+    if length(OVERRIDE_OBS_LABELS) == length(meta[:obs_labels])
+        @info "Overriding observable labels" old=meta[:obs_labels] new=OVERRIDE_OBS_LABELS
+        meta[:obs_labels] = OVERRIDE_OBS_LABELS
+    else
+        @warn "Skipping observable override (length mismatch)" override_len=length(OVERRIDE_OBS_LABELS) needed=length(meta[:obs_labels])
+    end
+end
+
+# Apply parameter rename map (display only)
+renamed = [ get(PNAMES_RENAME_MAP, pn, pn) for pn in meta[:pnames] ]
+if renamed != meta[:pnames]
+    @info "Renaming parameter display labels" old=meta[:pnames] new=renamed
+    meta[:pnames] = renamed
+end
+
+# If calibration data missing, synthesize a minimal placeholder so figure can still be produced
+if isempty(calibration)
+    @warn "Calibration group absent; creating synthetic flat trajectories for figure generation"
+    θ_true = meta[:θ_true]; θ_init = get(meta, :θ_init, θ_true)
+    pnames = meta[:pnames]; P = length(pnames)
+    obs_labels = meta[:obs_labels]; m = length(obs_labels)
+    # Two pseudo-iterations: initial then true (if equal, both columns identical)
+    θ_iters = hcat(θ_init, θ_true)
+    A_target_local = A_target
+    G_iters = hcat(A_target_local, A_target_local)
+    calibration = Dict(:synthetic => Dict(:θ_iters => θ_iters, :G_iters => G_iters))
+end
 
 function fig_scores(meta, score)
     methods = sort(collect(keys(score)))
@@ -277,11 +342,7 @@ function fig_responses(meta, responses, ts)
 end
 
 function fig_calibration(meta, calibration, A_target)
-    # Enforce explicit ordering for legend (Finite diff right after Analytic)
-    available = Set(keys(calibration))
-    preferred = [:analytic, :finite_diff, :gaussian, :neural]
-    methods = [m for m in preferred if m in available]
-    isempty(methods) && return nothing
+    methods = sort(collect(keys(calibration))); isempty(methods) && return nothing
     expected = Set(meta[:calibration_methods])
     missing = setdiff(expected, Set(methods))
     !isempty(missing) && @warn "Some calibration methods missing from file" missing
@@ -340,7 +401,7 @@ end
 Clean combined figure with single legend (boxed), mapped labels (Neural->KGMM),
 moderate fonts. Top row: observable convergence; bottom row: parameter trajectories.
 """
-function fig_calibration_and_parameters(meta, calibration, A_target; basefontsize=26)
+function fig_calibration_and_parameters(meta, calibration, A_target; basefontsize=30)
     methods = sort(collect(keys(calibration))); isempty(methods) && return nothing
     θ_true = meta[:θ_true]; pnames = meta[:pnames]; P = length(pnames)
     obs_labels = meta[:obs_labels]; m = length(obs_labels)
@@ -350,22 +411,29 @@ function fig_calibration_and_parameters(meta, calibration, A_target; basefontsiz
         "finite_diff" => "Finite diff",
         "analytic" => "Analytic",
     )
-    local_theme = publication_theme(basefontsize=basefontsize, ticksize=round(Int, 0.70*basefontsize))
+    local_theme = publication_theme(basefontsize=basefontsize, ticksize=round(Int, 0.70*basefontsize), grids=ENABLE_GRID_ALL)
     return with_theme(local_theme) do
-    # Increased overall height slightly for better vertical spacing between rows
-    # Previous height components: 2*250 + 100 = 600
-    # New height: 2*280 + 110 = 670 (~11% increase)
-    fig = Figure(resolution=(max(260*P, 260*m), 2*280 + 110))
+        fig = Figure(resolution=(max(300*P, 300*m), 2*300 + 120))
+        # Swap: parameters on top, observables on bottom
         grid_top = fig[1,1] = GridLayout(tellwidth=false)
         grid_bot = fig[2,1] = GridLayout(tellwidth=false)
         line_objs = Makie.AbstractPlot[]; labels = String[]; seen = Set{Symbol}()
-        # Top row (observables)
-        for j in 1:m
-            ax = Axis(grid_top[1,j], xlabel = "", ylabel = j==1 ? "Aᵢ" : "", title = obs_labels[j])
-            hlines!(ax, [A_target[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
+
+        # Custom titles fallback
+        param_titles = isnothing(CUSTOM_PARAM_TITLES) ? pnames : CUSTOM_PARAM_TITLES
+        obs_titles   = isnothing(CUSTOM_OBS_TITLES)   ? obs_labels : CUSTOM_OBS_TITLES
+        length(param_titles) == P || @warn "CUSTOM_PARAM_TITLES length mismatch; ignoring" expected=P got=length(param_titles)
+        length(obs_titles) == m   || @warn "CUSTOM_OBS_TITLES length mismatch; ignoring" expected=m got=length(obs_titles)
+        param_titles = length(param_titles)==P ? param_titles : pnames
+        obs_titles   = length(obs_titles)==m ? obs_titles : obs_labels
+
+        # Top row (parameters)
+        for (j, pname) in enumerate(pnames)
+            ax = Axis(grid_top[1,j], xlabel = "", ylabel = j==1 ? "θᵢ" : "", title = param_titles[j])
+            hlines!(ax, [θ_true[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
             for sym in methods
-                G = calibration[sym][:G_iters]; its = 1:size(G,2)
-                plt = lines!(ax, its, G[j,:]; color=color_for(sym), linewidth=3.5)
+                θ_iters = calibration[sym][:θ_iters]; its = 1:size(θ_iters, 2)
+                plt = lines!(ax, its, θ_iters[j, :]; color=color_for(sym), linewidth=3.5)
                 if !(sym in seen)
                     push!(line_objs, plt)
                     push!(labels, get(label_map, String(sym), String(sym)))
@@ -374,13 +442,13 @@ function fig_calibration_and_parameters(meta, calibration, A_target; basefontsiz
             end
             tightlimits!(ax)
         end
-        # Bottom row (parameters)
-        for (j, pname) in enumerate(pnames)
-            ax = Axis(grid_bot[1,j], xlabel = "iteration", ylabel = j==1 ? "θᵢ" : "", title = pname)
-            hlines!(ax, [θ_true[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
+        # Bottom row (observables)
+        for j in 1:m
+            ax = Axis(grid_bot[1,j], xlabel = "iteration", ylabel = j==1 ? "Aᵢ" : "", title = obs_titles[j])
+            hlines!(ax, [A_target[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
             for sym in methods
-                θ_iters = calibration[sym][:θ_iters]; its = 1:size(θ_iters, 2)
-                lines!(ax, its, θ_iters[j, :]; color=color_for(sym), linewidth=3.5)
+                G = calibration[sym][:G_iters]; its = 1:size(G,2)
+                lines!(ax, its, G[j,:]; color=color_for(sym), linewidth=3.5)
             end
             tightlimits!(ax)
         end

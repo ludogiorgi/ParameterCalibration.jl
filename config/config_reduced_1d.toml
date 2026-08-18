@@ -44,7 +44,7 @@ use_indicators = ["le"]
 # Methods to run: any subset of ["analytic", "gaussian", "neural", "finite_diff"]
 methods = ["analytic", "gaussian", "neural", "finite_diff"]
 # Maximum Newton iterations
-maxiters = 10
+maxiters = 2
 # Newton step tolerance on relative parameter change
 tol_theta = 1e-3
 # Damping factor for Newton updates
@@ -56,7 +56,7 @@ rng_offset = 1
 # Multiplicative perturbation applied elementwise to initial θ0
 theta_init_multipliers = [1.2, 1.2, 1.0, 1.0, 1.2]
 # Optional: indices (1-based) of free parameters to tune (omit to use all)
-free_idx = [1, 2, 5]
+# free_idx = [1, 2, 5]
 line_search = false
 line_search_max = 4
 callback = false

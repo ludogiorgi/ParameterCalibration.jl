@@ -9,7 +9,7 @@ function B_gfdt(model::GFDTModel, x)::Vector
     s     = model.s(x)
     Ψ     = model.dF_dθ(x, θ)               # d×p
     Σ     = model.Σ(x, θ)
-    Λall  = model.dΣ_dθ(x, θ)               # d×d×p
+    Λall  = model.dΣ_dθ(x, θ)               # d×r×p
     divΨ  = model.div_dF_dθ(x, θ)           # p
     divM  = model.divM(x, θ)                # d×p
     div2M = model.divdivM(x, θ)             # p

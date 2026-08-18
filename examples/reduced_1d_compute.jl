@@ -42,7 +42,7 @@ const PC = ParameterCalibration
 # --------------------------------------------------------------------------------------
 const PHYS_PARAMS = nothing  # populated from config below
 const RESULT_DIR = joinpath(@__DIR__, "data")
-const RESULT_FILE = joinpath(RESULT_DIR, "reduced_1d_results.h5")
+const RESULT_FILE = joinpath(RESULT_DIR, "reduced_1d_results_fullP.h5")
 const S_TXT_FILE = joinpath(RESULT_DIR, "S_matrices.txt")
 
 mkpath(RESULT_DIR)
@@ -291,7 +291,7 @@ function run_pipeline(; verbose=true, save_path=RESULT_FILE)
         h["meta/Tmax"] = Tmax
         h["meta/xs"] = xs
         h["meta/obs_labels"] = collect(obs_labels)
-        h["meta/pnames"] = ["F_tilde","a","b","c","s"]
+        h["meta/pnames"] = ["F","a","b","c","σ"]
         # Thresholds: store as separate name/value arrays for HDF5 compatibility
         try
             tnames = collect(keys(thresholds))

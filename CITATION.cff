@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper."
+title: "ParameterCalibration.jl"
+authors:
+  - family-names: "Giorgini"
+    given-names: "Ludovico T."
+repository-code: "https://github.com/ludogiorgi/ParameterCalibration.jl"
+year: 2026
+license: "BSD-3-Clause"
+preferred-citation:
+  type: article
+  title: "Statistical Parameter Calibration via the Generalized Fluctuation Dissipation Theorem"
+  authors:
+    - family-names: "Giorgini"
+      given-names: "Ludovico T."
+    - family-names: "Bischoff"
+      given-names: "Tobias"
+    - family-names: "Souza"
+      given-names: "Andre N."
+  year: 2026

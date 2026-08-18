@@ -18,7 +18,48 @@ using GLMakie
 using LinearAlgebra, Statistics, Printf
 using HDF5
 
-const DATA_FILE = joinpath(@__DIR__, "data", "reduced_1d_results.h5")
+"""
+Resolve which data file to use. Preference order:
+  1. Command line argument ARGS[1] if provided
+  2. Environment variable REDUCED1D_RESULTS
+  3. Full calibration file (reduced_1d_results_fullP.h5) if it exists
+  4. Fallback basic file (reduced_1d_results.h5)
+"""
+function resolve_data_file()
+    base_dir = joinpath(@__DIR__, "data")
+    if length(ARGS) >= 1 && !startswith(ARGS[1], "--")
+        return ARGS[1]
+    end
+    env_path = get(ENV, "REDUCED1D_RESULTS", nothing)
+    if env_path !== nothing && !isempty(env_path)
+        return env_path
+    end
+    fullP = joinpath(base_dir, "reduced_1d_results.h5")
+    basic = joinpath(base_dir, "reduced_1d_results.h5")
+    return isfile(fullP) ? fullP : basic
+end
+
+# Figure 1: Score & Jacobian --------------------------------------------------------------
+function fig_score_and_jac(meta, score)
+    xs = meta[:xs]
+    fig = Figure(resolution=(900, 580))
+    line_objs = Makie.AbstractPlot[]
+    labels = String[]
+    ax1 = Axis(fig[1,1]); styled_axis!(ax1; xlabel="x", ylabel="s(x)", title="Score")
+    push!(line_objs, lines!(ax1, xs, score[:s_true]; color=COL_ANALYTIC, linewidth=4)); push!(labels, "Analytical")
+    push!(line_objs, lines!(ax1, xs, score[:s_gauss]; color=COL_GAUSS, linewidth=3, linestyle=:dash)); push!(labels, "Gaussian")
+    push!(line_objs, lines!(ax1, xs, score[:s_nn]; color=COL_NEURAL, linewidth=3)); push!(labels, "KGMM")
+    ax2 = Axis(fig[2,1]); styled_axis!(ax2; xlabel="x", ylabel="∂s/∂x", title="Jacobian")
+    lines!(ax2, xs, score[:J_true]; color=COL_ANALYTIC, linewidth=4)
+    lines!(ax2, xs, score[:J_gauss]; color=COL_GAUSS, linewidth=3, linestyle=:dash)
+    lines!(ax2, xs, score[:J_nn]; color=COL_NEURAL, linewidth=3)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
+    leg.halign = :center
+    fig[3,1] = leg
+    fig
+end
+
+const DATA_FILE = resolve_data_file()
 const FIG_DIR = joinpath(@__DIR__, "..", "figures")
 mkpath(FIG_DIR)
 
@@ -28,8 +69,36 @@ const COL_GAUSS    = :black
 const COL_NEURAL   = :steelblue
 const COL_FD       = :darkorange
 
-const FONT_SIZE = 22
-set_theme!(Theme(fontsize=FONT_SIZE, Axis=(xlabelsize=FONT_SIZE, ylabelsize=FONT_SIZE, titlealign=:left, titlesize=FONT_SIZE+2, xgridvisible=false, ygridvisible=false)))
+const FONT_SIZE = 22  # increased slightly for improved readability
+# Enable grid on all axes (light subtle grid) and adjust sizes accordingly
+set_theme!(Theme(
+    fontsize = FONT_SIZE,
+    Axis = (
+        xlabelsize = FONT_SIZE + 2,
+        ylabelsize = FONT_SIZE + 2,
+        titlesize  = FONT_SIZE + 6,
+        titlealign = :left,
+        xgridvisible = true,
+        ygridvisible = true,
+        xgridcolor = (:gray, 0.25),
+        ygridcolor = (:gray, 0.25),
+        xgridwidth = 0.5,
+        ygridwidth = 0.5,
+    ),
+))
+
+# Optional global manual overrides (set to `nothing` to disable)
+const OVERRIDE_OBS_LABELS = ["u", "u²", "1{u≤2.5}"]  # set to nothing to use metadata
+# Parameter rename map: old_name => new_display_name (no slicing; preserves all parameters including σ)
+const PNAMES_RENAME_MAP = Dict(
+    "F" => "F",
+    "F_tilde" => "F", # if earlier naming retained in file
+    "a" => "a",
+    "b" => "b",
+    "c" => "c",
+    "σ" => "σ",
+    "s" => "σ"  # fallback if stored as 's'
+)
 
 # Utility to put nice framed axis styling ------------------------------------------------
 function styled_axis!(ax::Axis; xlabel="", ylabel="", title="")
@@ -97,40 +166,18 @@ function load_data(path::AbstractString)
             :S_gauss => read(h, "jacobian/S_gauss"),
             :S_nn => read(h, "jacobian/S_nn"),
         )
-        # Calibration groups dynamic
         calib = Dict{Symbol,Dict}()
-        for grp_name in keys(h["calibration"]) |> collect
-            gpath = joinpath("calibration", grp_name)
-            calib[Symbol(grp_name)] = Dict(
-                :θ_iters => read(h, joinpath(gpath, "θ_iters")),
-                :G_iters => read(h, joinpath(gpath, "G_iters")),
-            )
+        if haskey(h, "calibration")
+            for grp_name in keys(h["calibration"]) |> collect
+                gpath = joinpath("calibration", grp_name)
+                calib[Symbol(grp_name)] = Dict(
+                    :θ_iters => read(h, joinpath(gpath, "θ_iters")),
+                    :G_iters => read(h, joinpath(gpath, "G_iters")),
+                )
+            end
         end
         return (meta=meta, data=data, score=score, conjugate=conjugate, responses=responses, jac=jac, calib=calib)
     end
-end
-
-# Figure 1: Score & Jacobian --------------------------------------------------------------
-function fig_score_and_jac(meta, score)
-    xs = meta[:xs]
-    fig = Figure(resolution=(900, 580))
-    line_objs = Makie.AbstractPlot[]
-    labels = String[]
-
-    ax1 = Axis(fig[1,1]); styled_axis!(ax1; xlabel="x", ylabel="s(x)", title="Score")
-    push!(line_objs, lines!(ax1, xs, score[:s_true]; color=COL_ANALYTIC, linewidth=4)); push!(labels, "Analytical")
-    push!(line_objs, lines!(ax1, xs, score[:s_gauss]; color=COL_GAUSS, linewidth=3, linestyle=:dash)); push!(labels, "Gaussian")
-    push!(line_objs, lines!(ax1, xs, score[:s_nn]; color=COL_NEURAL, linewidth=3)); push!(labels, "KGMM")
-
-    ax2 = Axis(fig[2,1]); styled_axis!(ax2; xlabel="x", ylabel="∂s/∂x", title="Jacobian")
-    lines!(ax2, xs, score[:J_true]; color=COL_ANALYTIC, linewidth=4)
-    lines!(ax2, xs, score[:J_gauss]; color=COL_GAUSS, linewidth=3, linestyle=:dash)
-    lines!(ax2, xs, score[:J_nn]; color=COL_NEURAL, linewidth=3)
-
-    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false)
-    leg.halign = :center
-    fig[3,1] = leg
-    fig
 end
 
 # Figure 2: Conjugate variables B(x) ------------------------------------------------------
@@ -193,7 +240,7 @@ function fig_calibration(meta, calib, data)
     label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"KGMM", :finite_diff=>"Finite diff")
     line_objs = Makie.AbstractPlot[]; labels = String[]
     for j in 1:m
-        ax = Axis(grid[1,j]); styled_axis!(ax; xlabel="iteration", ylabel=obs_labels[j], title="$(obs_labels[j]) convergence")
+        ax = Axis(grid[1,j]); styled_axis!(ax; xlabel="iteration", ylabel=obs_labels[j], title="$(obs_labels[j])")
         hlines!(ax, [A_target[j]]; color=:gray, linestyle=:dot, linewidth=2)
         for (sym, col) in mapping
             haskey(calib, sym) || continue
@@ -241,58 +288,67 @@ function fig_parameter_trajectories(meta, calib)
     fig
 end
 
-"""
-    fig_calibration_and_parameters(meta, calib, data; basefontsize=22)
-
-Combined figure (reduced 1D) matching triad layout style:
-Top row: observable convergence (Aᵢ) with unified y-axis label only on first panel.
-Bottom row: parameter trajectories (θᵢ) with unified y-axis label only on first panel.
-Single legend (boxed) with consistent labels (Analytical, Gaussian, KGMM, Finite diff).
-"""
-function fig_calibration_and_parameters(meta, calib, data; basefontsize=22, tol=1e-12)
-    obs_labels = meta[:obs_labels]; A_target = data[:A_target]
+# Figure 6 (new): Merged parameter trajectories (perturbed only) + observable convergence -------
+function fig_calibration_and_parameters(meta, calib, data; tol=1e-12, font_scale=0.85)
     pnames = meta[:pnames]; θ_true = meta[:θ_true]; θ_init = meta[:θ_init]
-    # Identify varied parameters (exclude those unchanged within tolerance)
-    varied = [j for j in eachindex(θ_true) if !isapprox(θ_true[j], θ_init[j]; atol=tol, rtol=0.0)]
-    if isempty(varied)
-        varied = collect(eachindex(θ_true))  # fallback: show all if detection fails
+    obs_labels = meta[:obs_labels]; A_target = data[:A_target]
+    # Identify perturbed parameters (initial value differs from true) within tolerance
+    perturbed = findall(j -> !(isapprox(θ_true[j], θ_init[j]; atol=tol, rtol=0.0)), eachindex(θ_true))
+    if isempty(perturbed)
+        perturbed = collect(eachindex(θ_true))  # fallback: show all
     end
-    m = length(obs_labels); P = length(varied)
-    mapping = Dict(:analytic=>COL_ANALYTIC, :finite_diff=>COL_FD, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL)
-    label_map = Dict(:analytic=>"Analytical", :finite_diff=>"Finite diff", :gaussian=>"Gaussian", :neural=>"KGMM")
-    preferred = [:analytic, :finite_diff, :gaussian, :neural]
-    # Figure size scaled to panel count
-    fig = Figure(resolution=(max(300*m, 300*P), 2*250 + 100))
+    npert = length(perturbed); m = length(obs_labels)
+    # Layout: two stacked GridLayouts so column counts may differ
+    # Apply a local smaller fontsize by temporarily adjusting theme for this figure
+    base_fs = FONT_SIZE
+    local_fs = Int(round(base_fs * font_scale))
+    # Widen panels a bit (triad style uses ~280; we increase here from 420 to 460 per panel basis)
+    per_param_width = 460
+    per_obs_width   = 460
+    total_width = max(per_param_width*npert, per_obs_width*m)
+    # Reduced overall height slightly (was 500 + 500)
+    fig = Figure(size=(total_width, 460 + 460))
     top = fig[1,1] = GridLayout()
     bottom = fig[2,1] = GridLayout()
-    line_objs = Makie.AbstractPlot[]; labels = String[]; seen = Set{Symbol}()
-    # Row 1: observable convergence (Aᵢ)
-    for j in 1:m
-        ax = Axis(top[1,j]); styled_axis!(ax; xlabel="", ylabel = j==1 ? "Aᵢ" : "", title = obs_labels[j])
-        hlines!(ax, [A_target[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
-        for sym in preferred
+    mapping = Dict(:analytic=>COL_ANALYTIC, :gaussian=>COL_GAUSS, :neural=>COL_NEURAL, :finite_diff=>COL_FD)
+    label_map = Dict(:analytic=>"Analytical", :gaussian=>"Gaussian", :neural=>"KGMM", :finite_diff=>"Finite diff")
+    line_objs = Makie.AbstractPlot[]; labels = String[]
+    # Row 1: parameter trajectories (perturbed only)
+    for (colidx, j) in enumerate(perturbed)
+        pn = pnames[j]
+        # Only leftmost gets y label; use generic θᵢ for parameter trajectories
+        ax = Axis(top[1, colidx], xlabel="", ylabel= colidx==1 ? "θᵢ" : "", title=pn, xlabelsize=local_fs+2, ylabelsize=local_fs+2, titlesize=local_fs+6)
+        ax.xgridvisible = true; ax.ygridvisible = true
+        hlines!(ax, [θ_true[j]]; color=:gray, linestyle=:dot, linewidth=2)
+        # Use a fixed ordered list of methods for stable legend ordering
+        for sym in (:analytic, :gaussian, :neural, :finite_diff)
+            col = get(mapping, sym, nothing); isnothing(col) && continue
             haskey(calib, sym) || continue
-            G = calib[sym][:G_iters]
-            its = 1:size(G,2)
-            plt = lines!(ax, its, G[j,:]; color=get(mapping, sym, :black), linewidth=3)
-            if !(sym in seen)
-                push!(line_objs, plt); push!(labels, label_map[sym]); push!(seen, sym)
+            θ_iters = calib[sym][:θ_iters]
+            if colidx == 1
+                push!(line_objs, lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=col, linewidth=3)); push!(labels, label_map[sym])
+            else
+                lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=col, linewidth=3)
             end
         end
     end
-    # Row 2: parameter trajectories (θᵢ)
-    for (k_local, j) in enumerate(varied)
-        pname = pnames[j]
-        ax = Axis(bottom[1,k_local]); styled_axis!(ax; xlabel="iteration", ylabel = k_local==1 ? "θᵢ" : "", title = pname)
-        hlines!(ax, [θ_true[j]]; color=:gray55, linestyle=:dot, linewidth=1.6)
-        for sym in preferred
+    # Row 2: observable convergence
+    for j in 1:m
+        # Bottom row: iteration label only on bottom; leftmost gets generic Aᵢ label
+        ax = Axis(bottom[1,j], xlabel="iteration", ylabel= j==1 ? "Aᵢ" : "", title="$(obs_labels[j])", xlabelsize=local_fs+2, ylabelsize=local_fs+2, titlesize=local_fs+6)
+    ax.xgridvisible = true; ax.ygridvisible = true
+        hlines!(ax, [A_target[j]]; color=:gray, linestyle=:dot, linewidth=2)
+        for sym in (:analytic, :gaussian, :neural, :finite_diff)
+            col = get(mapping, sym, nothing); isnothing(col) && continue
             haskey(calib, sym) || continue
-            θ_iters = calib[sym][:θ_iters]
-            lines!(ax, 1:size(θ_iters,2), θ_iters[j,:]; color=get(mapping, sym, :black), linewidth=3)
+            its = 1:size(calib[sym][:G_iters], 2)
+            Gj = calib[sym][:G_iters][j, :]
+            # Add lines; legend already captured from parameter row
+            lines!(ax, its, Gj; color=col, linewidth=3)
         end
     end
-    # Legend
-    leg = Legend(fig, line_objs, labels; orientation=:horizontal, framevisible=true, tellwidth=false)
+    # Unified legend at bottom (row 3)
+    leg = Legend(fig, line_objs, labels; framevisible=true, orientation=:horizontal, tellwidth=false, fontsize=local_fs)
     leg.halign = :center
     fig[3,1] = leg
     fig
@@ -304,14 +360,52 @@ function save_figure(fig::Figure, name::AbstractString)
     @info "Saved figure" path
 end
 
+function parse_extra_args()
+    # Extract optional --font-scale=<val> from ARGS
+    fs = nothing
+    for a in ARGS
+        if startswith(a, "--font-scale=")
+            try
+                fs = parse(Float64, split(a, "=", limit=2)[2])
+            catch
+                @warn "Invalid font scale argument: $a"
+            end
+        end
+    end
+    return fs
+end
+
 function main()
+    @info "Using data file" DATA_FILE
     bundle = load_data(DATA_FILE)
     meta, data, score, conjugate, responses, jac, calib = bundle
+    # Apply overrides after loading
+    if OVERRIDE_OBS_LABELS !== nothing
+        new_obs = OVERRIDE_OBS_LABELS
+        if length(new_obs) == size(responses[:C_true], 1)
+            @info "Overriding observable labels" old=meta[:obs_labels] new=new_obs
+            meta[:obs_labels] = new_obs
+        else
+            @warn "Skipping observable label override: mismatch" new_len=length(new_obs) needed=size(responses[:C_true],1)
+        end
+    end
+    # Apply rename map if any key matches (non-destructive)
+    renamed = [ get(PNAMES_RENAME_MAP, pn, pn) for pn in meta[:pnames] ]
+    if renamed != meta[:pnames]
+        @info "Renaming parameter display labels" old=meta[:pnames] new=renamed
+        meta[:pnames] = renamed
+    end
     save_figure(fig_score_and_jac(meta, score), "score_jacobian_reduced1d.png")
     save_figure(fig_conjugate(meta, conjugate), "conjugate_B_reduced1d.png")
     save_figure(fig_responses(meta, responses), "response_functions_reduced1d.png")
     # Replaced separate calibration & parameter trajectory figures with merged figure
-    save_figure(fig_calibration_and_parameters(meta, calib, data), "calibration_parameters_reduced1d.png")
+    if !isempty(calib)
+        fs = parse_extra_args()
+        fig = isnothing(fs) ? fig_calibration_and_parameters(meta, calib, data) : fig_calibration_and_parameters(meta, calib, data; font_scale=fs)
+        save_figure(fig, "calibration_parameters_reduced1d.png")
+    else
+        @info "No calibration group found in file; skipping calibration/parameter trajectory figure"
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

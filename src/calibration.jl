@@ -204,7 +204,7 @@ function calibration_loop(method::SensitivityMethod, A_target::AbstractVector;
         local Xn::Array{Float64,2}
         local A_of_x_iter::Function
         local G::Vector{Float64}
-        # Simulate model trajectory and exit early if it is invalid 
+        # Simulate model trajectory and exit early if it is invalid
         Xobs = simulator_obs(θ)
         μ = vec(mean(Xobs, dims=2)); Σ = vec(std(Xobs, dims=2))
         Xn = (Xobs .- μ) ./ Σ

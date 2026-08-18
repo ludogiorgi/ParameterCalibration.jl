@@ -37,4 +37,3 @@ function gaussian_score_from_data(X::AbstractMatrix; jitter::Real=1e-10, max_tri
     end
     return (s=s, Js=Js, μ=μ, Cinv=Cinv)
 end
-

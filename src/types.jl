@@ -16,9 +16,9 @@ Base.@kwdef struct GFDTModel{Sf,Sd,Sj,Ff,Sg,DF,DG,DDivF,DdivM,DDivDivM,Tθ,Tx}
 
     # Drift/Diffusion & θ-Jacobians
     F::Ff                             # F(x, θ) :: d-vector
-    Σ::Sg                             # Σ(x, θ) :: d×d
+    Σ::Sg                             # Σ(x, θ) :: d×r (r noise dimensions)
     dF_dθ::DF                         # dF/dθ(x, θ) :: d×p, columns are Ψ_j
-    dΣ_dθ::DG                         # dΣ/dθ(x, θ) :: d×d×p, slices[:,:,j] = Λ_j
+    dΣ_dθ::DG                         # dΣ/dθ(x, θ) :: d×r×p, slices[:,:,j] = Λ_j
 
     # Analytic spatial divergences
     div_dF_dθ::DDivF                  # ∇·Ψ_j(x) :: p-vector

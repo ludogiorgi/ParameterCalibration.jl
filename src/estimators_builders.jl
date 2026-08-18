@@ -33,14 +33,17 @@ end
         -> (responses::Array{Float64,3}, S::Matrix{Float64})
 
 Compute time-lagged responses C[i,j,k] = E[A_i(t+k) B_j(t)] for k=0..Kmax and
-the Jacobian S via −Δt*sum_k C[i,j,k]. Mean-center A and B if requested.
+integrate them to obtain the Jacobian. Composite Simpson quadrature is the
+default; `:trapezoid` and the legacy `:rectangle` rule are also available.
+Mean-center A and B if requested.
 """
 function build_responses(model_v::GFDTModel,
                          X::AbstractMatrix,
                          A_of_x::Function;
                          Δt::Real,
                          Tmax::Real,
-                         mean_center::Bool=true)
+                         mean_center::Bool=true,
+                         quadrature::Symbol=:simpson)
     d, T = size(X)
     A1 = A_of_x(@view X[:,1])
     m = length(A1)
@@ -54,32 +57,79 @@ function build_responses(model_v::GFDTModel,
         @views Bseries[:,t] = B_gfdt(model_v, x)
     end
 
+    return build_responses_from_series(Aseries, Bseries;
+                                       Δt=Δt, Tmax=Tmax,
+                                       mean_center=mean_center,
+                                       quadrature=quadrature)
+end
+
+"""
+    integrate_responses(responses, Δt; quadrature=:simpson)
+
+Integrate the continuous-time GFDT correlation along its lag dimension.
+Composite Simpson quadrature is the default because the former left-rectangle
+rule produced a visible `O(Δt)` bias at coarse response cadence.  If the
+number of intervals is odd, Simpson is used up to the penultimate interval and
+a trapezoid closes the final interval.
+"""
+function integrate_responses(responses::AbstractArray{<:Real,3},
+                             Δt::Real;
+                             quadrature::Symbol=:simpson)
+    nintervals = size(responses, 3) - 1
+    nintervals >= 0 || throw(ArgumentError("responses must contain at least one lag"))
+    dt = float(Δt)
+    if quadrature === :rectangle || nintervals == 0
+        return -dt .* dropdims(sum(responses, dims=3), dims=3)
+    elseif quadrature === :trapezoid
+        interior = nintervals > 1 ? dropdims(sum(@view(responses[:, :, 2:end-1]), dims=3), dims=3) :
+                                   zeros(Float64, size(responses, 1), size(responses, 2))
+        return -dt .* (0.5 .* responses[:, :, 1] .+ interior .+
+                       0.5 .* responses[:, :, end])
+    elseif quadrature === :simpson
+        q = isodd(nintervals) ? nintervals - 1 : nintervals
+        if q == 0
+            return -0.5dt .* (responses[:, :, 1] .+ responses[:, :, 2])
+        end
+        integral = Matrix{Float64}(responses[:, :, 1] .+ responses[:, :, q + 1])
+        @inbounds for k in 1:q-1
+            integral .+= (isodd(k) ? 4.0 : 2.0) .* responses[:, :, k + 1]
+        end
+        integral .*= dt / 3
+        if q < nintervals
+            integral .+= 0.5dt .* (responses[:, :, q + 1] .+ responses[:, :, q + 2])
+        end
+        return -integral
+    end
+    throw(ArgumentError("quadrature must be :simpson, :trapezoid, or :rectangle"))
+end
+
+"""
+    build_responses_from_series(Aseries, Bseries; Δt, Tmax, mean_center=true,
+                                quadrature=:simpson)
+
+Integrate a full GFDT-style response matrix from already evaluated observable
+and conjugate-variable series.  This separates expensive model/score
+evaluation from the shared FFT correlation engine and enables vectorized or
+batched `B` construction without changing the estimator definition.
+"""
+function build_responses_from_series(Aseries::AbstractMatrix,
+                                     Bseries::AbstractMatrix;
+                                     Δt::Real,
+                                     Tmax::Real,
+                                     mean_center::Bool=true,
+                                     quadrature::Symbol=:simpson)
+    size(Aseries, 2) == size(Bseries, 2) ||
+        throw(DimensionMismatch("Aseries and Bseries must share the time dimension"))
+    T = size(Aseries, 2)
+    Awork = Matrix{Float64}(Aseries)
+    Bwork = Matrix{Float64}(Bseries)
     if mean_center
-        @inbounds for i in 1:m
-            μ = mean(@view Aseries[i,:]); Aseries[i,:] .-= μ
-        end
-        @inbounds for j in 1:p
-            μ = mean(@view Bseries[j,:]); Bseries[j,:] .-= μ
-        end
+        Awork .-= mean(Awork, dims=2)
+        Bwork .-= mean(Bwork, dims=2)
     end
-
     Kmax = _Kmax(Δt, Tmax, T)
-    responses = Array{Float64}(undef, m, p, Kmax+1)
-    tmpA = Vector{Float64}(undef, T)
-    tmpB = Vector{Float64}(undef, T)
-    @inbounds for i in 1:m
-        @views tmpA .= Aseries[i,:]
-        for j in 1:p
-            @views tmpB .= Bseries[j,:]
-            cpos = xcorr_one_sided(tmpA, tmpB, Kmax)
-            @views responses[i,j,1:Kmax+1] .= cpos
-        end
-    end
-
-    S = Matrix{Float64}(undef, m, p)
-    @inbounds for i in 1:m, j in 1:p
-        @views S[i,j] = -float(Δt) * sum(responses[i,j,1:Kmax+1])
-    end
+    responses = xcorr_matrix_one_sided(Awork, Bwork, Kmax)
+    S = integrate_responses(responses, Δt; quadrature=quadrature)
     return responses, S
 end
 
@@ -193,23 +243,39 @@ function build_neural_estimator(X::AbstractMatrix,
     end
     # Determine epochs to use: scratch uses cfg.n_epochs; retrain uses cfg.epochs_re
     n_epochs_use = (nn === nothing || cfg.preprocessing) ? max(cfg.n_epochs, 0) : max(cfg.epochs_re, 0)
-    nn_tr, _train_losses, _val, _div_fn, jac_fn, _ = ScoreEstimation.train(
-        X;
-        preprocessing=cfg.preprocessing,
-        σ=cfg.σ,
-        neurons=cfg.neurons,
-        n_epochs=n_epochs_use,
-        batch_size=cfg.batch_size,
-        lr=cfg.lr,
-        use_gpu=cfg.use_gpu,
-        verbose=cfg.verbose,
-        kgmm_kwargs=cfg.kgmm_kwargs,
-        divergence=false,
-        probes=cfg.probes,
-        rademacher=cfg.rademacher,
-        jacobian=true,
-        nn=nn,
-    )
+    # KGMM builds its random tree from a noisy draw. Rarely a leaf receives no
+    # samples on the next EMA draw, and older ScoreEstimation releases expose
+    # that as a one-column DimensionMismatch. Retrying rebuilds the stochastic
+    # partition without changing the estimator or silently switching training
+    # objectives. The outer experiment seed still makes the retry reproducible.
+    train_result = nothing
+    for attempt in 1:3
+        try
+            train_result = ScoreEstimation.train(
+                X;
+                preprocessing=cfg.preprocessing,
+                σ=cfg.σ,
+                neurons=cfg.neurons,
+                n_epochs=n_epochs_use,
+                batch_size=cfg.batch_size,
+                lr=cfg.lr,
+                use_gpu=cfg.use_gpu,
+                verbose=cfg.verbose,
+                kgmm_kwargs=cfg.kgmm_kwargs,
+                divergence=false,
+                probes=cfg.probes,
+                rademacher=cfg.rademacher,
+                jacobian=true,
+                nn=nn,
+            )
+            break
+        catch err
+            retryable = cfg.preprocessing && err isa DimensionMismatch && attempt < 3
+            retryable || rethrow()
+            @warn "KGMM partition mismatch; rebuilding stochastic partition" attempt
+        end
+    end
+    nn_tr, _train_losses, _val, _div_fn, jac_fn, _ = train_result
     s_use, Js_use = _mk_s_js(nn_tr)
     model_v = _make_model_view(model, θ, s_use, Js_use)
     local responses, S

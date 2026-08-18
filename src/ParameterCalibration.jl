@@ -3,6 +3,7 @@ module ParameterCalibration
 using LinearAlgebra
 using Statistics
 using Random
+using FFTW
 using ScoreEstimation
 using ProgressMeter
 using FastSDE
@@ -49,6 +50,9 @@ export
     load_extra_config,
     # Estimator builders/utilities
     build_responses,
+    build_responses_from_series,
+    integrate_responses,
+    xcorr_matrix_one_sided,
     build_analytic_estimator,
     build_gaussian_estimator,
     build_neural_estimator,
